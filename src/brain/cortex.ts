@@ -4,17 +4,32 @@ import { getAllTextModels } from './router.js';
 import { extractThinking } from './thinker.js';
 import { extractAndStore } from '../memory/extractor.js';
 import { getAiSdkTools } from '../tools/registry.js';
-import { searchRelevantContext } from '../memory/search.js';
 import { getLogger } from '../utils/logger.js';
 
 // ═══════════════════════════════════════════
 // Cortex — Main Reasoning Loop
-// SEARCH → THINK → ACT → REMEMBER → RESPOND
-// With automatic provider fallback
+// THINK → ACT → REMEMBER → RESPOND
+// With automatic provider fallback + rate limiting
 // ═══════════════════════════════════════════
 
 const logger = getLogger('cortex');
 const TIMEOUT_MS = 120_000; // 120s — free models are slow
+const MIN_INTERVAL_MS = 3_000; // 3s min between API calls (anti-strike)
+const FALLBACK_DELAY_MS = 2_000; // 2s wait between fallback attempts
+
+let lastApiCall = 0;
+
+/** Rate-limited wait — ensures MIN_INTERVAL_MS between API calls */
+async function waitForRateLimit(): Promise<void> {
+  const now = Date.now();
+  const elapsed = now - lastApiCall;
+  if (elapsed < MIN_INTERVAL_MS) {
+    const wait = MIN_INTERVAL_MS - elapsed;
+    logger.debug({ waitMs: wait }, 'rate limit: waiting before next API call');
+    await new Promise(resolve => setTimeout(resolve, wait));
+  }
+  lastApiCall = Date.now();
+}
 
 export interface ReasonInput {
   userMessage: string;
@@ -42,6 +57,8 @@ async function tryGenerate(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tools: any,
 ) {
+  await waitForRateLimit(); // Anti-strike: wait if too fast
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
@@ -67,26 +84,23 @@ async function tryGenerate(
 
 /**
  * Main reasoning function. Called for every user message.
- * Implements the SEARCH → THINK → ACT → REMEMBER → RESPOND pipeline.
+ * Implements the THINK → ACT → REMEMBER → RESPOND pipeline.
  * Automatically falls back to next provider if one fails or times out.
  */
 export async function reason(input: ReasonInput): Promise<ReasonOutput> {
   const startTime = Date.now();
-
-  // ═══ STEP 1: SEARCH — Build context with relevant memories ═══
   logger.info({ msg: input.userMessage.slice(0, 80) }, 'reasoning started');
 
-  // Memory search is non-fatal — if it fails, continue without memories
-  let memories: Awaited<ReturnType<typeof searchRelevantContext>> = [];
-  try {
-    memories = await searchRelevantContext(input.userMessage);
-  } catch (err) {
-    logger.warn({ error: err instanceof Error ? err.message : String(err) }, 'memory search failed, continuing without');
-  }
+  // ═══ STEP 1: Build context (includes memory search internally) ═══
+  // NOTE: buildContext already does searchRelevantContext + searchRelatedEntities
+  // So we DON'T search separately here — avoids duplicate API calls
 
   let systemPrompt: string;
+  let memoriesFound = 0;
   try {
-    systemPrompt = await buildContext(input.userMessage, input.userId);
+    const result = await buildContext(input.userMessage, input.userId);
+    systemPrompt = result.prompt;
+    memoriesFound = result.memoriesFound;
   } catch (err) {
     logger.warn({ error: err instanceof Error ? err.message : String(err) }, 'context build failed, using minimal');
     systemPrompt = 'You are Pegasus, a helpful AI assistant. Respond in the user\'s language.';
@@ -110,7 +124,8 @@ export async function reason(input: ReasonInput): Promise<ReasonOutput> {
   let result;
   let usedProvider = 'unknown';
 
-  for (const { model, providerType, modelId } of models) {
+  for (let i = 0; i < models.length; i++) {
+    const { model, providerType, modelId } = models[i]!;
     try {
       logger.info({ provider: providerType, model: modelId }, 'trying provider');
       result = await tryGenerate(model, systemPrompt, messages, tools);
@@ -124,7 +139,10 @@ export async function reason(input: ReasonInput): Promise<ReasonOutput> {
         { provider: providerType, model: modelId, error: errMsg, timeout: isTimeout },
         isTimeout ? 'provider timed out, trying fallback' : 'provider failed, trying fallback'
       );
-      // Continue to next provider
+      // Wait before trying next provider (anti-strike)
+      if (i < models.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, FALLBACK_DELAY_MS));
+      }
     }
   }
 
@@ -138,10 +156,12 @@ export async function reason(input: ReasonInput): Promise<ReasonOutput> {
     logger.debug({ thinking: thinking.slice(0, 200) }, 'internal reasoning');
   }
 
-  // ═══ STEP 4: REMEMBER — Extract and store memories (non-blocking) ═══
-  extractAndStore(input.userMessage, response, input.conversationId).catch(err => {
-    logger.debug({ error: err instanceof Error ? err.message : String(err) }, 'extraction failed');
-  });
+  // ═══ STEP 4: REMEMBER — Extract and store memories (non-blocking, rate-limited) ═══
+  setTimeout(() => {
+    extractAndStore(input.userMessage, response, input.conversationId).catch(err => {
+      logger.debug({ error: err instanceof Error ? err.message : String(err) }, 'extraction failed');
+    });
+  }, MIN_INTERVAL_MS); // Delay memory extraction to avoid API burst
 
   // ═══ STEP 5: RESPOND ═══
   const elapsed = Date.now() - startTime;
@@ -151,7 +171,7 @@ export async function reason(input: ReasonInput): Promise<ReasonOutput> {
     elapsed: `${elapsed}ms`,
     provider: usedProvider,
     tools: toolsUsed.length,
-    memories: memories.length,
+    memories: memoriesFound,
     responseLen: response.length,
   }, 'reasoning complete');
 
@@ -159,6 +179,6 @@ export async function reason(input: ReasonInput): Promise<ReasonOutput> {
     response,
     thinking,
     toolsUsed,
-    memoriesFound: memories.length,
+    memoriesFound,
   };
 }

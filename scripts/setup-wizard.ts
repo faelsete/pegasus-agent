@@ -251,7 +251,7 @@ async function main(): Promise<void> {
   console.log('  ┌─ 🟢 NVIDIA NIM (grátis em build.nvidia.com)');
   const nvidiaKey = (await rl.question('  │  API Key (Enter = pular): ')).trim();
   if (nvidiaKey) {
-    const model = await pickModel(rl, 'nvidia', nvidiaKey, 'https://integrate.api.nvidia.com/v1', 'meta/llama-3.1-70b-instruct');
+    const model = await pickModel(rl, 'nvidia', nvidiaKey, 'https://integrate.api.nvidia.com/v1', 'qwen/qwen3.5-122b-a10b');
     config.providers.push({ type: 'nvidia', apiKey: nvidiaKey, baseUrl: 'https://integrate.api.nvidia.com/v1', defaultModel: model, enabled: true });
     config.memory.embeddingProvider = 'nvidia';
     config.memory.embeddingModel = 'nvidia/nv-embedqa-e5-v5';

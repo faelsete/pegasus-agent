@@ -12,17 +12,25 @@ import { getLogger } from '../utils/logger.js';
 
 // ═══════════════════════════════════════════
 // Context Builder — 8-Layer System Prompt
+// Single source of memory search (no duplicates)
 // ═══════════════════════════════════════════
 
 const logger = getLogger('context');
 
+export interface ContextResult {
+  prompt: string;
+  memoriesFound: number;
+}
+
 /**
  * Build the complete system prompt with all 8 layers.
  * Called before EVERY LLM call.
+ * Returns both the prompt AND how many memories were found.
  */
-export async function buildContext(userMessage: string, userId: string): Promise<string> {
+export async function buildContext(userMessage: string, userId: string): Promise<ContextResult> {
   const config = getConfig();
   const sections: string[] = [];
+  let memoriesFound = 0;
 
   // LAYER 1: Core Rules (ALWAYS present, never removed)
   const instructions = loadInstructions();
@@ -52,22 +60,31 @@ export async function buildContext(userMessage: string, userId: string): Promise
     sections.push(`<project_rules>\n${projectRules.join('\n---\n')}\n</project_rules>`);
   }
 
-  // LAYER 6: Relevant Memories (semantic search)
-  const memories = await searchRelevantContext(userMessage);
-  if (memories.length > 0) {
-    const block = memories.map(m =>
-      `- [${m.type}|score:${m.score.toFixed(2)}] ${m.text}`
-    ).join('\n');
-    sections.push(`<relevant_memories>\nThese are memories from previous conversations. Use them if relevant:\n${block}\n</relevant_memories>`);
+  // LAYER 6: Relevant Memories (semantic search) — SINGLE search, no duplicates
+  try {
+    const memories = await searchRelevantContext(userMessage);
+    memoriesFound = memories.length;
+    if (memories.length > 0) {
+      const block = memories.map(m =>
+        `- [${m.type}|score:${m.score.toFixed(2)}] ${m.text}`
+      ).join('\n');
+      sections.push(`<relevant_memories>\nThese are memories from previous conversations. Use them if relevant:\n${block}\n</relevant_memories>`);
+    }
+  } catch (err) {
+    logger.warn({ error: err instanceof Error ? err.message : String(err) }, 'memory search failed, skipping');
   }
 
   // LAYER 7: Knowledge Graph Context
-  const entities = searchRelatedEntities(userMessage);
-  if (entities.length > 0) {
-    const block = entities.map(e =>
-      `- ${e.name} (${e.type}): ${e.summary ?? 'no summary'} [seen ${e.accessCount}x]`
-    ).join('\n');
-    sections.push(`<knowledge_context>\n${block}\n</knowledge_context>`);
+  try {
+    const entities = searchRelatedEntities(userMessage);
+    if (entities.length > 0) {
+      const block = entities.map(e =>
+        `- ${e.name} (${e.type}): ${e.summary ?? 'no summary'} [seen ${e.accessCount}x]`
+      ).join('\n');
+      sections.push(`<knowledge_context>\n${block}\n</knowledge_context>`);
+    }
+  } catch (err) {
+    logger.warn({ error: err instanceof Error ? err.message : String(err) }, 'knowledge search failed, skipping');
   }
 
   // LAYER 8: Thinking Instruction
@@ -79,9 +96,8 @@ export async function buildContext(userMessage: string, userId: string): Promise
   logger.debug({
     layers: sections.length,
     chars: fullContext.length,
-    memories: memories.length,
-    entities: entities.length,
+    memories: memoriesFound,
   }, 'context built');
 
-  return fullContext;
+  return { prompt: fullContext, memoriesFound };
 }
