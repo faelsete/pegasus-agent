@@ -50,6 +50,7 @@ sudo bash scripts/service.sh install
 
 ## 2. Comandos Rápidos
 
+### Terminal (SSH)
 | O que fazer | Comando |
 |---|---|
 | Iniciar bot | `sudo systemctl start pegasus` |
@@ -61,6 +62,20 @@ sudo bash scripts/service.sh install
 | Reconfigurar tudo | `cd ~/pegasus-agent && npm run setup` |
 | Diagnóstico | `cd ~/pegasus-agent && npm run doctor` |
 | Modo CLI | `cd ~/pegasus-agent && npm run start:cli` |
+
+### Telegram (sem precisar de SSH)
+| O que fazer | Comando |
+|---|---|
+| Ver status | `/status` |
+| Trocar modelo | `/setmodel qwen/qwen3.5-122b-a10b` |
+| Ver modelo atual | `/model` |
+| Ligar thinking | `/think on` |
+| Desligar thinking | `/think off` |
+| Reiniciar bot | `/restart` |
+| Nova conversa | `/new` |
+| Buscar memória | `/search <query>` |
+| Salvar memória | `/remember <fato>` |
+| Ajuda | `/help` |
 
 ---
 
@@ -98,6 +113,13 @@ Salve (Ctrl+O, Enter, Ctrl+X) e reinicie:
 ```bash
 sudo systemctl restart pegasus
 ```
+
+### Método 4: Pelo Telegram (sem SSH)
+Mande no chat do bot:
+```
+/setmodel qwen/qwen3.5-397b-a17b
+```
+O modelo troca instantaneamente, sem reiniciar o bot. Funciona com qualquer modelo do seu provider ativo.
 
 ### Modelos Populares por Provedor
 
