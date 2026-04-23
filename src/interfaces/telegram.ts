@@ -4,6 +4,11 @@ import { reason } from '../brain/cortex.js';
 import { searchRelevantContext } from '../memory/search.js';
 import { addMemory, getMemoryCount } from '../memory/store.js';
 import { getLogger } from '../utils/logger.js';
+import { estimateTokens } from '../utils/tokens.js';
+import { getHistoryBudget } from '../brain/context.js';
+import { updateProviderModel, toggleThinking, reloadConfig, getConfig } from '../config/loader.js';
+import { clearInstructionCache } from '../memory/instructions.js';
+import { clearContextCache } from '../brain/context.js';
 import type { PegasusConfig } from '../config/schema.js';
 import type { CoreMessage } from 'ai';
 import { getDb } from '../db/sqlite.js';
@@ -63,19 +68,51 @@ function getOrCreateConversationId(chatId: number): string {
   return id;
 }
 
-/** Build conversation history from SQLite — LIMITED to prevent context overflow */
-function getHistory(conversationId: string): CoreMessage[] {
+/**
+ * Build conversation history with budget awareness.
+ * Most recent messages get full content. Older messages get summarized.
+ * Total token count is capped to stay within model limits.
+ */
+function getHistory(conversationId: string, tokenBudget: number): CoreMessage[] {
   const db = getDb();
-  // Only get last 15 messages to keep context size manageable
+  // Get last 20 messages (we'll trim by budget)
   const rows = db.prepare(
-    'SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 15'
+    'SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 20'
   ).all(conversationId) as Array<{ role: string; content: string }>;
 
-  return rows.reverse().map(r => ({
-    role: r.role as 'user' | 'assistant',
-    // Truncate each message to prevent token overflow
-    content: r.content.length > 2000 ? r.content.slice(0, 2000) + '...(truncado)' : r.content,
-  }));
+  const reversed = rows.reverse();
+  const result: CoreMessage[] = [];
+  let usedTokens = 0;
+
+  // Process from NEWEST to OLDEST, filling budget
+  for (let i = reversed.length - 1; i >= 0; i--) {
+    const row = reversed[i]!;
+    let content = row.content;
+
+    // Recent messages (last 4): full content (up to 1500 chars)
+    const recency = reversed.length - 1 - i;
+    if (recency < 4) {
+      content = content.length > 1500 ? content.slice(0, 1500) + '...' : content;
+    }
+    // Older messages: aggressive compression (300 chars)
+    else {
+      content = content.length > 300 ? content.slice(0, 300) + '...' : content;
+    }
+
+    const msgTokens = estimateTokens(content);
+
+    // Stop if we'd exceed budget
+    if (usedTokens + msgTokens > tokenBudget) {
+      logger.debug({ dropped: i + 1, budget: tokenBudget, used: usedTokens }, 'history trimmed by budget');
+      break;
+    }
+
+    result.unshift({ role: row.role as 'user' | 'assistant', content });
+    usedTokens += msgTokens;
+  }
+
+  logger.debug({ messages: result.length, tokens: usedTokens, budget: tokenBudget }, 'history built');
+  return result;
 }
 
 /** Save message to SQLite */
@@ -147,21 +184,28 @@ export function createBot(config: PegasusConfig): Bot<PegasusContext> {
     `/remember <fato> — Salva memória\n` +
     `/new — Nova conversa (mantém memórias)\n` +
     `/model — Modelo atual\n` +
+    `/setmodel <modelo> — Troca o modelo\n` +
+    `/think on|off — Liga/desliga thinking\n` +
+    `/restart — Reinicia o Pegasus\n` +
     `/doctor — Diagnóstico\n` +
     `/help — Este menu`,
     { parse_mode: 'Markdown' }
   ));
 
   bot.command('status', async (ctx) => {
+    const currentConfig = getConfig();
     const memCount = await getMemoryCount();
     const uptime = process.uptime();
     const h = Math.floor(uptime / 3600);
     const m = Math.floor((uptime % 3600) / 60);
+    const provider = currentConfig.providers.find(p => p.enabled);
     await ctx.reply(
       `🐴 *Pegasus Status*\n\n` +
       `💾 Memórias: ${memCount}\n` +
       `⏱️ Uptime: ${h}h ${m}m\n` +
-      `🧠 Providers: ${config.providers.filter(p => p.enabled).length}\n` +
+      `🧠 Modelo: ${provider?.type}/${provider?.defaultModel ?? 'default'}\n` +
+      `🧠 Providers: ${currentConfig.providers.filter(p => p.enabled).length}\n` +
+      `💭 Thinking: ${currentConfig.thinkingEnabled ? 'ON' : 'OFF'}\n` +
       `💬 Conversa: ${ctx.session.conversationId.slice(0, 12)}...\n` +
       `💬 Msgs nesta sessão: ${ctx.session.messageCount}`,
       { parse_mode: 'Markdown' }
@@ -207,8 +251,91 @@ export function createBot(config: PegasusConfig): Bot<PegasusContext> {
   });
 
   bot.command('model', (ctx) => {
-    const provider = config.providers.find(p => p.enabled);
+    const currentConfig = getConfig();
+    const provider = currentConfig.providers.find(p => p.enabled);
     ctx.reply(`🤖 Modelo atual: ${provider?.type}/${provider?.defaultModel ?? 'default'}`);
+  });
+
+  // ═══ NEW: /setmodel — Change model at runtime ═══
+  bot.command('setmodel', async (ctx) => {
+    const newModel = ctx.message?.text?.replace(/^\/setmodel\s*/, '').trim();
+    if (!newModel) {
+      const currentConfig = getConfig();
+      const provider = currentConfig.providers.find(p => p.enabled);
+      await ctx.reply(
+        `🤖 *Trocar Modelo*\n\n` +
+        `Atual: \`${provider?.type}/${provider?.defaultModel}\`\n\n` +
+        `Uso: /setmodel <nome-do-modelo>\n\n` +
+        `Exemplos:\n` +
+        `\`/setmodel qwen/qwen3.5-122b-a10b\`\n` +
+        `\`/setmodel qwen/qwen3.5-397b-a17b\`\n` +
+        `\`/setmodel openai/gpt-oss-120b\`\n` +
+        `\`/setmodel moonshotai/kimi-k2-thinking\``,
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    try {
+      const currentConfig = getConfig();
+      const provider = currentConfig.providers.find(p => p.enabled);
+      if (!provider) {
+        await ctx.reply('⚠️ Nenhum provider ativo encontrado.');
+        return;
+      }
+      const oldModel = provider.defaultModel;
+      updateProviderModel(provider.type, newModel);
+      clearContextCache(); // Reload context on next message
+      await ctx.reply(
+        `✅ Modelo trocado!\n\n` +
+        `De: \`${oldModel}\`\n` +
+        `Para: \`${newModel}\`\n\n` +
+        `Próxima mensagem usará o novo modelo.`,
+        { parse_mode: 'Markdown' }
+      );
+      logger.info({ from: oldModel, to: newModel }, 'model changed via Telegram');
+    } catch (err) {
+      await ctx.reply(`⚠️ Erro ao trocar modelo: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
+
+  // ═══ NEW: /think — Toggle thinking on/off ═══
+  bot.command('think', async (ctx) => {
+    const arg = ctx.message?.text?.replace(/^\/think\s*/, '').trim().toLowerCase();
+
+    if (arg !== 'on' && arg !== 'off') {
+      const currentConfig = getConfig();
+      await ctx.reply(
+        `💭 *Thinking Mode*\n\n` +
+        `Status atual: ${currentConfig.thinkingEnabled ? '✅ ON' : '❌ OFF'}\n\n` +
+        `Uso:\n` +
+        `/think on — Ativa raciocínio interno\n` +
+        `/think off — Desativa (economiza tokens)`,
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    const enabled = arg === 'on';
+    toggleThinking(enabled);
+    clearContextCache();
+    await ctx.reply(`💭 Thinking ${enabled ? 'ATIVADO ✅' : 'DESATIVADO ❌'}`);
+    logger.info({ thinking: enabled }, 'thinking toggled via Telegram');
+  });
+
+  // ═══ NEW: /restart — Restart Pegasus (systemd re-spawns) ═══
+  bot.command('restart', async (ctx) => {
+    await ctx.reply('🔄 Reiniciando Pegasus em 3 segundos...');
+    logger.info('restart requested via Telegram');
+
+    // Clear caches before exit
+    clearInstructionCache();
+    clearContextCache();
+
+    // Give Telegram time to deliver the message
+    setTimeout(() => {
+      process.exit(0); // systemd Restart=always will re-spawn
+    }, 3000);
   });
 
   // ═══ Message Handlers ═══
@@ -250,7 +377,9 @@ export function createBot(config: PegasusConfig): Bot<PegasusContext> {
     }, 4000);
 
     try {
-      const history = getHistory(ctx.session.conversationId);
+      // Budget-aware history: uses getHistoryBudget to determine how many tokens for history
+      const historyBudget = getHistoryBudget(800); // estimate ~800 for system prompt
+      const history = getHistory(ctx.session.conversationId, historyBudget);
       const result = await reason({
         userMessage: ctx.message.text,
         conversationHistory: history,

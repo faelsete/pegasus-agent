@@ -1,15 +1,19 @@
-import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
-import { join, extname } from 'node:path';
-import { getConfigDir, expandPath } from '../config/loader.js';
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { getConfigDir } from '../config/loader.js';
 import { truncateToTokens } from '../utils/tokens.js';
 import { getLogger } from '../utils/logger.js';
 
 // ═══════════════════════════════════════════
-// Instructions Loader (PEGASUS.md + CLAUDE.md compat)
+// Instructions Loader — Cached, No CLAUDE.md
 // ═══════════════════════════════════════════
 
 const logger = getLogger('instructions');
-const MAX_FILE_TOKENS = 3000;
+const MAX_FILE_TOKENS = 2000;
+
+// ═══ In-Memory Cache ═══
+let cachedInstructions: string | null = null;
+let cachedPersona: string | null = null;
 
 /** Safely read a file, return null if not found */
 function safeRead(path: string): string | null {
@@ -26,38 +30,33 @@ function stripComments(content: string): string {
   return content.replace(/<!--[\s\S]*?-->/g, '').trim();
 }
 
-/** Load all .md files from a directory */
-function loadMdDir(dirPath: string): string[] {
-  try {
-    if (!existsSync(dirPath) || !statSync(dirPath).isDirectory()) return [];
-    const files = readdirSync(dirPath, { recursive: true }) as string[];
-    return files
-      .filter(f => extname(String(f)) === '.md')
-      .map(f => safeRead(join(dirPath, String(f))))
-      .filter((c): c is string => c !== null && c.trim().length > 0);
-  } catch {
-    return [];
-  }
-}
+// ═══ Core Instructions (cached after first load) ═══
 
-// ═══ Core Instructions (always loaded) ═══
-
-/** Load ~/.pegasus/instructions.md — ALWAYS present */
+/** Load ~/.pegasus/instructions.md — cached in memory */
 export function loadInstructions(): string {
+  if (cachedInstructions !== null) return cachedInstructions;
+
   const path = join(getConfigDir(), 'instructions.md');
   const content = safeRead(path);
   if (!content) {
     logger.warn('instructions.md not found, using minimal fallback');
-    return 'You are Pegasus, a helpful AI assistant with persistent memory.';
+    cachedInstructions = 'You are Pegasus, a helpful AI assistant with persistent memory. Use sudo for privileged commands.';
+    return cachedInstructions;
   }
-  return truncateToTokens(stripComments(content), MAX_FILE_TOKENS);
+  cachedInstructions = truncateToTokens(stripComments(content), MAX_FILE_TOKENS);
+  logger.info('instructions.md loaded and cached');
+  return cachedInstructions;
 }
 
-/** Load ~/.pegasus/persona.md */
+/** Load ~/.pegasus/persona.md — cached in memory */
 export function loadPersona(): string | null {
+  if (cachedPersona !== null) return cachedPersona || null;
+
   const path = join(getConfigDir(), 'persona.md');
   const content = safeRead(path);
-  return content ? truncateToTokens(stripComments(content), MAX_FILE_TOKENS) : null;
+  cachedPersona = content ? truncateToTokens(stripComments(content), MAX_FILE_TOKENS) : '';
+  if (cachedPersona) logger.info('persona.md loaded and cached');
+  return cachedPersona || null;
 }
 
 /** Load ~/.pegasus/user.md */
@@ -67,45 +66,21 @@ export function loadUserProfile(): string | null {
   return content ? truncateToTokens(stripComments(content), MAX_FILE_TOKENS) : null;
 }
 
-// ═══ Project Instructions (PEGASUS.md + CLAUDE.md compat) ═══
-
-/**
- * Load project instructions from current directory.
- * PEGASUS.md takes priority. CLAUDE.md is loaded for compatibility.
- */
-export function loadProjectInstructions(): string[] {
-  const cwd = process.cwd();
-  const results: string[] = [];
-
-  // Priority order: PEGASUS.md > CLAUDE.md
-  for (const name of ['PEGASUS.md', 'CLAUDE.md']) {
-    const content = safeRead(join(cwd, name));
-    if (content) {
-      results.push(truncateToTokens(stripComments(content), MAX_FILE_TOKENS));
-    }
-    // Also check hidden dir variant
-    const hiddenContent = safeRead(join(cwd, name === 'PEGASUS.md' ? '.pegasus' : '.claude', name));
-    if (hiddenContent) {
-      results.push(truncateToTokens(stripComments(hiddenContent), MAX_FILE_TOKENS));
-    }
-  }
-
-  return results;
+/** Flush cache — called on /restart or config reload */
+export function clearInstructionCache(): void {
+  cachedInstructions = null;
+  cachedPersona = null;
+  logger.info('instruction cache cleared');
 }
 
-/**
- * Load project rules from .pegasus/rules/ and .claude/rules/ (compat).
- * Consumes Claude Code rules without modifying them.
- */
+// ═══ Project Instructions — REMOVED ═══
+// CLAUDE.md and project-level scanning was removed.
+// The bot should not load development rules as AI context.
+
+export function loadProjectInstructions(): string[] {
+  return []; // Disabled — no project-level scanning
+}
+
 export function loadProjectRules(): string[] {
-  const cwd = process.cwd();
-  const results: string[] = [];
-
-  // Load from both directories
-  for (const dir of ['.pegasus/rules', '.claude/rules']) {
-    const rules = loadMdDir(join(cwd, dir));
-    results.push(...rules.map(r => truncateToTokens(stripComments(r), MAX_FILE_TOKENS)));
-  }
-
-  return results;
+  return []; // Disabled — no project-level scanning
 }

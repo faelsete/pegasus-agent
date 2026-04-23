@@ -83,7 +83,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=${INSTALL_USER}
+User=root
 WorkingDirectory=${WORK_DIR}
 ExecStart=${NODE_PATH} --import tsx/esm src/index.ts
 Restart=always
@@ -95,6 +95,7 @@ StartLimitBurst=5
 Environment=NODE_ENV=production
 Environment=HOME=${INSTALL_HOME}
 Environment=PATH=${FULL_PATH}
+Environment=RUST_LOG=warn
 
 # Logging
 StandardOutput=journal

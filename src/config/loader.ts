@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import dotenv from 'dotenv';
@@ -159,4 +159,42 @@ export function getConfig(): PegasusConfig {
 export function reloadConfig(): PegasusConfig {
   cachedConfig = null;
   return loadConfig();
+}
+
+/**
+ * Update a specific provider's defaultModel in config.json and reload.
+ * Used by /setmodel Telegram command.
+ */
+export function updateProviderModel(providerType: string, newModel: string): void {
+  const configPath = join(getConfigDir(), 'config.json');
+  if (!existsSync(configPath)) return;
+
+  const raw = readFileSync(configPath, 'utf-8');
+  const json = JSON.parse(raw) as Record<string, unknown>;
+  const providers = json.providers as Array<Record<string, unknown>> | undefined;
+
+  if (providers) {
+    const target = providers.find(p => p.type === providerType && p.enabled !== false);
+    if (target) {
+      target.defaultModel = newModel;
+      writeFileSync(configPath, JSON.stringify(json, null, 2), 'utf-8');
+    }
+  }
+
+  reloadConfig();
+}
+
+/**
+ * Toggle thinkingEnabled in config.json and reload.
+ */
+export function toggleThinking(enabled: boolean): void {
+  const configPath = join(getConfigDir(), 'config.json');
+  if (!existsSync(configPath)) return;
+
+  const raw = readFileSync(configPath, 'utf-8');
+  const json = JSON.parse(raw) as Record<string, unknown>;
+  json.thinkingEnabled = enabled;
+  writeFileSync(configPath, JSON.stringify(json, null, 2), 'utf-8');
+
+  reloadConfig();
 }

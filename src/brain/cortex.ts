@@ -56,6 +56,7 @@ async function tryGenerate(
   messages: CoreMessage[],
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tools: any,
+  allToolCalls: string[], // accumulator for tool names across steps
 ) {
   await waitForRateLimit(); // Anti-strike: wait if too fast
 
@@ -71,9 +72,14 @@ async function tryGenerate(
       maxSteps: 10,
       temperature: 0.7,
       abortSignal: controller.signal,
-      onStepFinish: async ({ toolResults }) => {
-        if (toolResults && Array.isArray(toolResults) && toolResults.length > 0) {
-          logger.debug({ count: toolResults.length }, 'tools executed in step');
+      onStepFinish: async ({ toolCalls }) => {
+        if (toolCalls && Array.isArray(toolCalls)) {
+          for (const tc of toolCalls) {
+            allToolCalls.push(tc.toolName);
+          }
+          if (toolCalls.length > 0) {
+            logger.debug({ tools: toolCalls.map(t => t.toolName) }, 'tools executed in step');
+          }
         }
       },
     });
@@ -123,12 +129,13 @@ export async function reason(input: ReasonInput): Promise<ReasonOutput> {
 
   let result;
   let usedProvider = 'unknown';
+  const allToolCalls: string[] = []; // Accumulate tool calls across ALL steps
 
   for (let i = 0; i < models.length; i++) {
     const { model, providerType, modelId } = models[i]!;
     try {
       logger.info({ provider: providerType, model: modelId }, 'trying provider');
-      result = await tryGenerate(model, systemPrompt, messages, tools);
+      result = await tryGenerate(model, systemPrompt, messages, tools, allToolCalls);
       usedProvider = providerType;
       logger.info({ provider: providerType }, 'provider responded');
       break; // success, stop trying
@@ -163,12 +170,12 @@ export async function reason(input: ReasonInput): Promise<ReasonOutput> {
 
   // ═══ STEP 5: RESPOND ═══
   const elapsed = Date.now() - startTime;
-  const toolsUsed = result.toolCalls?.map(t => t.toolName) ?? [];
 
   logger.info({
     elapsed: `${elapsed}ms`,
     provider: usedProvider,
-    tools: toolsUsed.length,
+    tools: allToolCalls.length,
+    toolNames: allToolCalls.length > 0 ? allToolCalls.join(', ') : 'none',
     memories: memoriesFound,
     responseLen: response.length,
   }, 'reasoning complete');
@@ -176,7 +183,7 @@ export async function reason(input: ReasonInput): Promise<ReasonOutput> {
   return {
     response,
     thinking,
-    toolsUsed,
+    toolsUsed: allToolCalls,
     memoriesFound,
   };
 }
