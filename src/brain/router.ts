@@ -1,5 +1,5 @@
-import type { LanguageModel } from 'ai';
 import { createProvider, getDefaultTextProvider, getProviderConfig } from '../models/providers.js';
+import type { ProviderConfig } from '../config/schema.js';
 import type { TaskType } from '../models/types.js';
 import { getLogger } from '../utils/logger.js';
 
@@ -10,36 +10,51 @@ import { getLogger } from '../utils/logger.js';
 const logger = getLogger('router');
 
 /**
+ * Create a LanguageModel from a provider instance + model ID.
+ * Handles both createOpenAI (callable) and createOpenAICompatible (.chatModel())
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getModel(providerConfig: ProviderConfig, fallbackModel: string): any {
+  const sdk = createProvider(providerConfig);
+  const modelId = providerConfig.defaultModel ?? fallbackModel;
+
+  // createOpenAICompatible returns an object with .chatModel()
+  // createOpenAI and createGoogleGenerativeAI return a callable function
+  if (typeof sdk === 'function') {
+    return sdk(modelId);
+  }
+  if (sdk && typeof sdk === 'object' && 'chatModel' in sdk) {
+    return (sdk as { chatModel: (id: string) => unknown }).chatModel(modelId);
+  }
+  // Fallback: try calling as function
+  return (sdk as unknown as (id: string) => unknown)(modelId);
+}
+
+/**
  * Select the appropriate model for a given task type.
  * Priority: configured default → fallback chain
  */
-export function selectModel(task: TaskType): LanguageModel {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function selectModel(task: TaskType): any {
   switch (task) {
     case 'text': {
       const provider = getDefaultTextProvider();
-      const sdk = createProvider(provider);
-      const modelId = provider.defaultModel ?? 'meta/llama-3.1-70b-instruct';
-      logger.debug({ provider: provider.type, model: modelId }, 'selected text model');
-      return sdk(modelId);
+      logger.debug({ provider: provider.type, model: provider.defaultModel }, 'selected text model');
+      return getModel(provider, 'meta/llama-3.1-70b-instruct');
     }
 
     case 'fast': {
-      // Try ollama first (free, fast), then nvidia, then openrouter
       const ollama = getProviderConfig('ollama');
       if (ollama) {
-        const sdk = createProvider(ollama);
-        return sdk(ollama.defaultModel ?? 'llama3.1');
+        return getModel(ollama, 'llama3.1');
       }
-      // Fall back to main text model
       return selectModel('text');
     }
 
     case 'code': {
-      // Prefer codex/openai for code, fallback to text
       const codex = getProviderConfig('codex');
       if (codex) {
-        const sdk = createProvider(codex);
-        return sdk(codex.defaultModel ?? 'gpt-4o');
+        return getModel(codex, 'gpt-4o');
       }
       return selectModel('text');
     }

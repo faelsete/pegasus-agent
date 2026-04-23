@@ -1,4 +1,5 @@
 import { createOpenAI } from '@ai-sdk/openai';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { getConfig } from '../config/loader.js';
 import type { ProviderConfig } from '../config/schema.js';
@@ -6,6 +7,8 @@ import { getLogger } from '../utils/logger.js';
 
 // ═══════════════════════════════════════════
 // AI SDK Provider Instances
+// Uses createOpenAICompatible for third-party
+// OpenAI-compatible endpoints (NVIDIA, OpenRouter, Ollama)
 // ═══════════════════════════════════════════
 
 const logger = getLogger('providers');
@@ -14,15 +17,21 @@ const logger = getLogger('providers');
 export function createProvider(providerConfig: ProviderConfig) {
   switch (providerConfig.type) {
     case 'nvidia':
-      return createOpenAI({
-        apiKey: providerConfig.apiKey ?? '',
+      return createOpenAICompatible({
+        name: 'nvidia-nim',
         baseURL: providerConfig.baseUrl ?? 'https://integrate.api.nvidia.com/v1',
+        headers: {
+          Authorization: `Bearer ${providerConfig.apiKey ?? ''}`,
+        },
       });
 
     case 'openrouter':
-      return createOpenAI({
-        apiKey: providerConfig.apiKey ?? '',
+      return createOpenAICompatible({
+        name: 'openrouter',
         baseURL: 'https://openrouter.ai/api/v1',
+        headers: {
+          Authorization: `Bearer ${providerConfig.apiKey ?? ''}`,
+        },
       });
 
     case 'gemini':
@@ -36,8 +45,8 @@ export function createProvider(providerConfig: ProviderConfig) {
       });
 
     case 'ollama':
-      return createOpenAI({
-        apiKey: 'ollama', // not needed but required by SDK
+      return createOpenAICompatible({
+        name: 'ollama',
         baseURL: providerConfig.baseUrl ?? 'http://localhost:11434/v1',
       });
 

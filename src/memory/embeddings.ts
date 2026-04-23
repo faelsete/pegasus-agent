@@ -1,4 +1,5 @@
 import { createOpenAI } from '@ai-sdk/openai';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { embedMany, embed } from 'ai';
 import { getConfig } from '../config/loader.js';
 import { getLogger } from '../utils/logger.js';
@@ -14,7 +15,6 @@ const cache = new Map<string, number[]>();
 const MAX_CACHE = 1000;
 
 function getCacheKey(text: string): string {
-  // Simple hash for cache key
   let hash = 0;
   for (let i = 0; i < text.length; i++) {
     hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
@@ -22,7 +22,8 @@ function getCacheKey(text: string): string {
   return String(hash);
 }
 
-function getEmbeddingModel() {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getEmbeddingModel(): any {
   const config = getConfig();
   const memConfig = config.memory;
 
@@ -31,12 +32,23 @@ function getEmbeddingModel() {
     throw new Error(`No API key for embedding provider: ${memConfig.embeddingProvider}`);
   }
 
-  const openai = createOpenAI({
-    apiKey: provider.apiKey,
-    baseURL: provider.baseUrl ?? 'https://openrouter.ai/api/v1',
-  });
+  // Use createOpenAI only for native OpenAI/Codex
+  if (provider.type === 'codex') {
+    const openai = createOpenAI({
+      apiKey: provider.apiKey,
+    });
+    return openai.embedding(memConfig.embeddingModel);
+  }
 
-  return openai.embedding(memConfig.embeddingModel);
+  // Use createOpenAICompatible for third-party endpoints (OpenRouter, NVIDIA)
+  const compatible = createOpenAICompatible({
+    name: `${provider.type}-embeddings`,
+    baseURL: provider.baseUrl ?? 'https://openrouter.ai/api/v1',
+    headers: {
+      Authorization: `Bearer ${provider.apiKey}`,
+    },
+  });
+  return compatible.textEmbeddingModel(memConfig.embeddingModel);
 }
 
 /** Generate embedding for a single text */
@@ -62,7 +74,6 @@ export async function embedText(text: string): Promise<number[]> {
 export async function embedBatch(texts: string[]): Promise<number[][]> {
   const model = getEmbeddingModel();
 
-  // Process in chunks of 100
   const results: number[][] = [];
   for (let i = 0; i < texts.length; i += 100) {
     const chunk = texts.slice(i, i + 100);
