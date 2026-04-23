@@ -67,12 +67,13 @@ export class Brainstem {
       const report = await dreamer.consolidate();
       logger.info({ report }, 'dream complete');
 
-      if (this.notifyFn && (report.merged > 0 || report.insights > 0)) {
+      if (this.notifyFn && (report.merged > 0 || report.insights > 0 || report.compacted > 0)) {
         await this.notifyFn(
           `🌙 *Sonho concluído*\n` +
+          `📉 Decayed: ${report.decayed}\n` +
           `📦 Merged: ${report.merged}\n` +
-          `💡 Insights: ${report.insights}\n` +
-          `🧹 Removed: ${report.removed}`
+          `🗜️ Compacted: ${report.compacted}\n` +
+          `💡 Insights: ${report.insights}`
         );
       }
     } catch (err) {

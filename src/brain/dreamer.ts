@@ -1,4 +1,4 @@
-import { getAllMemories, addMemory } from '../memory/store.js';
+import { getAllMemories, addMemory, applyImportanceDecay } from '../memory/store.js';
 import { getTopEntities, getEntityNetwork } from '../memory/knowledge.js';
 import { embedText } from '../memory/embeddings.js';
 import { generateText } from 'ai';
@@ -7,66 +7,86 @@ import { getConfig } from '../config/loader.js';
 import { getLogger } from '../utils/logger.js';
 
 // ═══════════════════════════════════════════
-// Dreamer — Memory Consolidation (Sonhos)
+// Dreamer — Human-like Memory Consolidation
+//
+// Like sleep consolidation in the brain:
+// 1. DECAY — Reduce importance of unaccessed memories
+// 2. DEDUP — Remove exact duplicates
+// 3. COMPACT — Merge old, low-importance memories into summaries
+// 4. INSIGHTS — Cross-reference entities to generate new knowledge
+//
+// RULE: Memories are NEVER deleted. Only compacted.
 // ═══════════════════════════════════════════
 
 const logger = getLogger('dreamer');
 
 export interface DreamReport {
+  decayed: number;
   merged: number;
-  summarized: number;
-  boosted: number;
-  removed: number;
+  compacted: number;
   insights: number;
 }
 
 export class Dreamer {
   async consolidate(): Promise<DreamReport> {
-    const report: DreamReport = { merged: 0, summarized: 0, boosted: 0, removed: 0, insights: 0 };
-    const config = getConfig();
+    const report: DreamReport = { decayed: 0, merged: 0, compacted: 0, insights: 0 };
 
     try {
-      // 1. DEDUP — Remove exact duplicates
+      // 1. DECAY — Apply time-based importance reduction
+      report.decayed = await applyImportanceDecay();
+      logger.debug({ decayed: report.decayed }, 'decay phase complete');
+
+      // 2. DEDUP — Find and flag exact duplicates
       const allMemories = await getAllMemories();
       const seen = new Map<string, string>();
       for (const mem of allMemories) {
         const key = mem.text.trim().toLowerCase();
         if (seen.has(key)) {
-          report.removed++;
+          report.merged++;
         } else {
           seen.set(key, mem.id);
         }
       }
+      logger.debug({ merged: report.merged }, 'dedup phase complete');
 
-      // 2. MERGE — Find similar memories (cosine > threshold)
-      const threshold = config.memory.consolidationThreshold;
-      const embeddings = new Map<string, number[]>();
+      // 3. COMPACT — Group old low-importance memories and summarize
+      const now = Date.now();
+      const oldLowImportance = allMemories.filter(m => {
+        const ageWeeks = (now - m.timestamp) / (7 * 24 * 60 * 60 * 1000);
+        return ageWeeks > 4 && m.importance < 0.3 && m.type !== 'compacted';
+      });
 
-      // Only process a subset to avoid excessive API calls
-      const sample = allMemories.slice(0, 200);
-      for (const mem of sample) {
-        try {
-          const emb = await embedText(mem.text);
-          embeddings.set(mem.id, emb);
-        } catch {
-          continue;
-        }
-      }
+      // Group old memories in batches of 10 and create summaries
+      if (oldLowImportance.length >= 5) {
+        const batches = chunkArray(oldLowImportance, 10);
+        for (const batch of batches.slice(0, 3)) { // Max 3 compactions per cycle
+          try {
+            const model = selectModel('fast');
+            const memoryTexts = batch.map(m => `- [${m.type}] ${m.text}`).join('\n');
 
-      const merged = new Set<string>();
-      for (const [id1, emb1] of embeddings) {
-        if (merged.has(id1)) continue;
-        for (const [id2, emb2] of embeddings) {
-          if (id1 === id2 || merged.has(id2)) continue;
-          const similarity = cosineSimilarity(emb1, emb2);
-          if (similarity > threshold) {
-            merged.add(id2);
-            report.merged++;
+            const result = await generateText({
+              model,
+              system: `You are a memory compaction system. Given a list of old memories, create a SINGLE concise summary that preserves the essential information. Be brief but complete. Write in the same language as the memories.`,
+              prompt: `Compact these ${batch.length} memories into one summary:\n\n${memoryTexts}`,
+              temperature: 0.2,
+            });
+
+            if (result.text.trim()) {
+              await addMemory(result.text.trim(), 'compacted', {
+                source: 'compaction',
+                importance: 0.3,
+                tags: 'compacted',
+              });
+              report.compacted++;
+              logger.debug({ batchSize: batch.length, summary: result.text.slice(0, 100) }, 'memories compacted');
+            }
+          } catch {
+            continue;
           }
         }
       }
 
-      // 3. INSIGHTS — Cross-reference top entities
+      // 4. INSIGHTS — Cross-reference top entities
       const topEntities = getTopEntities(10);
       for (const entity of topEntities) {
         const network = getEntityNetwork(entity.id, 2);
@@ -75,7 +95,7 @@ export class Dreamer {
             const model = selectModel('fast');
             const result = await generateText({
               model,
-              system: 'Generate a brief insight (1-2 sentences) connecting these entities.',
+              system: 'Generate a brief insight (1-2 sentences) connecting these entities. Write in the same language as the entity names.',
               prompt: `Entities: ${[entity.name, ...network.map(n => n.name)].join(', ')}`,
               temperature: 0.3,
             });
@@ -90,7 +110,7 @@ export class Dreamer {
         }
       }
 
-      logger.info(report, 'consolidation report');
+      logger.info(report, 'dream cycle complete');
     } catch (err) {
       logger.error({ err: err instanceof Error ? err.message : String(err) }, 'consolidation error');
     }
@@ -99,16 +119,10 @@ export class Dreamer {
   }
 }
 
-function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length !== b.length) return 0;
-  let dotProduct = 0;
-  let normA = 0;
-  let normB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dotProduct += (a[i] ?? 0) * (b[i] ?? 0);
-    normA += (a[i] ?? 0) ** 2;
-    normB += (b[i] ?? 0) ** 2;
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
   }
-  const denom = Math.sqrt(normA) * Math.sqrt(normB);
-  return denom === 0 ? 0 : dotProduct / denom;
+  return chunks;
 }
