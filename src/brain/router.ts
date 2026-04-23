@@ -33,7 +33,23 @@ function getModel(providerConfig: ProviderConfig, fallbackModel: string): any {
 }
 
 /**
+ * Expand a single provider config into multiple if it has apiKeys array.
+ * Each key becomes its own entry in the fallback chain.
+ */
+function expandProviderKeys(provider: ProviderConfig): ProviderConfig[] {
+  const keys = provider.apiKeys;
+  if (keys && keys.length > 0) {
+    return keys.map((key, i) => {
+      logger.debug({ type: provider.type, keyIndex: i + 1, total: keys.length }, 'expanding multi-key provider');
+      return { ...provider, apiKey: key, apiKeys: undefined };
+    });
+  }
+  return [provider];
+}
+
+/**
  * Get ALL available text models ordered by priority.
+ * Supports multiple providers of the same type AND multiple keys per provider.
  * Used by cortex for fallback: if first fails, try next.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -42,22 +58,29 @@ export function getAllTextModels(): Array<{ model: any; providerType: string; mo
   const results: Array<{ model: unknown; providerType: string; modelId: string }> = [];
 
   for (const type of TEXT_PROVIDER_PRIORITY) {
-    const provider = config.providers.find(p => p.type === type && p.enabled);
-    if (provider) {
-      try {
-        const fallback = type === 'nvidia' ? 'meta/llama-3.1-70b-instruct'
-          : type === 'ollama' ? 'llama3.1'
-          : type === 'codex' ? 'gpt-4o'
-          : 'meta-llama/llama-3.1-70b-instruct';
-        const model = getModel(provider, fallback);
-        const modelId = provider.defaultModel ?? fallback;
-        results.push({ model, providerType: type, modelId });
-      } catch (err) {
-        logger.warn({ provider: type, error: err instanceof Error ? err.message : String(err) }, 'provider init failed, skipping');
+    // Find ALL providers of this type (not just the first one)
+    const providers = config.providers.filter(p => p.type === type && p.enabled);
+    for (const provider of providers) {
+      // Expand multi-key providers into separate entries
+      const expanded = expandProviderKeys(provider);
+      for (const singleProvider of expanded) {
+        try {
+          const fallback = type === 'nvidia' ? 'qwen/qwen3.5-122b-a10b'
+            : type === 'ollama' ? 'llama3.1'
+            : type === 'codex' ? 'gpt-4o'
+            : type === 'gemini' ? 'gemini-2.0-flash'
+            : 'google/gemma-3-27b-it:free';
+          const model = getModel(singleProvider, fallback);
+          const modelId = singleProvider.defaultModel ?? fallback;
+          results.push({ model, providerType: type, modelId });
+        } catch (err) {
+          logger.warn({ provider: type, error: err instanceof Error ? err.message : String(err) }, 'provider init failed, skipping');
+        }
       }
     }
   }
 
+  logger.info({ total: results.length, chain: results.map(r => `${r.providerType}`).join('→') }, 'fallback chain built');
   return results;
 }
 

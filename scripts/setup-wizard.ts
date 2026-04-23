@@ -245,40 +245,61 @@ async function main(): Promise<void> {
   // ═══════════════════════════════════════
   console.log('\n═══ ETAPA 2: Provedores de IA ═══');
   console.log('  Coloque a chave de cada provedor que quiser usar.');
-  console.log('  Pode ter vários — se um cair, o bot tenta o próximo.\n');
+  console.log('  Pode ter vários — se um cair, o bot tenta o próximo.');
+  console.log('  💡 Para fallback com múltiplas contas, separe chaves com vírgula.\n');
 
   // --- NVIDIA ---
   console.log('  ┌─ 🟢 NVIDIA NIM (grátis em build.nvidia.com)');
-  const nvidiaKey = (await rl.question('  │  API Key (Enter = pular): ')).trim();
-  if (nvidiaKey) {
-    const model = await pickModel(rl, 'nvidia', nvidiaKey, 'https://integrate.api.nvidia.com/v1', 'qwen/qwen3.5-122b-a10b');
-    config.providers.push({ type: 'nvidia', apiKey: nvidiaKey, baseUrl: 'https://integrate.api.nvidia.com/v1', defaultModel: model, enabled: true });
+  console.log('  │  💡 Múltiplas chaves? Separe com vírgula: key1,key2,key3');
+  const nvidiaRaw = (await rl.question('  │  API Key(s) (Enter = pular): ')).trim();
+  if (nvidiaRaw) {
+    const keys = nvidiaRaw.split(',').map(k => k.trim()).filter(Boolean);
+    const model = await pickModel(rl, 'nvidia', keys[0]!, 'https://integrate.api.nvidia.com/v1', 'qwen/qwen3.5-122b-a10b');
+    if (keys.length > 1) {
+      config.providers.push({ type: 'nvidia', apiKeys: keys, baseUrl: 'https://integrate.api.nvidia.com/v1', defaultModel: model, enabled: true });
+      console.log(`  └─ ✅ NVIDIA → ${model} (${keys.length} chaves para fallback!)\n`);
+    } else {
+      config.providers.push({ type: 'nvidia', apiKey: keys[0], baseUrl: 'https://integrate.api.nvidia.com/v1', defaultModel: model, enabled: true });
+      console.log(`  └─ ✅ NVIDIA → ${model}\n`);
+    }
     config.memory.embeddingProvider = 'nvidia';
     config.memory.embeddingModel = 'nvidia/nv-embedqa-e5-v5';
-    console.log(`  └─ ✅ NVIDIA → ${model} (embeddings grátis ativados!)\n`);
   } else {
     console.log('  └─ ⏭️  Pulou\n');
   }
 
   // --- OpenRouter ---
   console.log('  ┌─ 🟣 OpenRouter (modelos grátis e pagos — openrouter.ai)');
-  console.log('  │  💡 Tem modelos grátis! Busque por "free" na lista.');
-  const orKey = (await rl.question('  │  API Key (Enter = pular): ')).trim();
-  if (orKey) {
-    const model = await pickModel(rl, 'openrouter', orKey, undefined, 'deepseek/deepseek-chat-v3-0324:free', ':free');
-    config.providers.push({ type: 'openrouter', apiKey: orKey, baseUrl: 'https://openrouter.ai/api/v1', defaultModel: model, enabled: true });
-    console.log(`  └─ ✅ OpenRouter → ${model}\n`);
+  console.log('  │  💡 Tem modelos :free! Múltiplas chaves? Separe com vírgula.');
+  const orRaw = (await rl.question('  │  API Key(s) (Enter = pular): ')).trim();
+  if (orRaw) {
+    const keys = orRaw.split(',').map(k => k.trim()).filter(Boolean);
+    const model = await pickModel(rl, 'openrouter', keys[0]!, undefined, 'deepseek/deepseek-chat-v3-0324:free', ':free');
+    if (keys.length > 1) {
+      config.providers.push({ type: 'openrouter', apiKeys: keys, baseUrl: 'https://openrouter.ai/api/v1', defaultModel: model, enabled: true });
+      console.log(`  └─ ✅ OpenRouter → ${model} (${keys.length} chaves)\n`);
+    } else {
+      config.providers.push({ type: 'openrouter', apiKey: keys[0], baseUrl: 'https://openrouter.ai/api/v1', defaultModel: model, enabled: true });
+      console.log(`  └─ ✅ OpenRouter → ${model}\n`);
+    }
   } else {
     console.log('  └─ ⏭️  Pulou\n');
   }
 
   // --- Gemini ---
   console.log('  ┌─ 🔵 Google Gemini (grátis com limites — aistudio.google.com)');
-  const geminiKey = (await rl.question('  │  API Key (Enter = pular): ')).trim();
-  if (geminiKey) {
-    const model = await pickModel(rl, 'gemini', geminiKey, undefined, 'gemini-2.0-flash');
-    config.providers.push({ type: 'gemini', apiKey: geminiKey, defaultModel: model, enabled: true });
-    console.log(`  └─ ✅ Gemini → ${model}\n`);
+  console.log('  │  💡 Múltiplas contas? Separe as chaves com vírgula.');
+  const geminiRaw = (await rl.question('  │  API Key(s) (Enter = pular): ')).trim();
+  if (geminiRaw) {
+    const keys = geminiRaw.split(',').map(k => k.trim()).filter(Boolean);
+    const model = await pickModel(rl, 'gemini', keys[0]!, undefined, 'gemini-2.0-flash');
+    if (keys.length > 1) {
+      config.providers.push({ type: 'gemini', apiKeys: keys, defaultModel: model, enabled: true });
+      console.log(`  └─ ✅ Gemini → ${model} (${keys.length} chaves para fallback!)\n`);
+    } else {
+      config.providers.push({ type: 'gemini', apiKey: keys[0], defaultModel: model, enabled: true });
+      console.log(`  └─ ✅ Gemini → ${model}\n`);
+    }
   } else {
     console.log('  └─ ⏭️  Pulou\n');
   }

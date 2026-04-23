@@ -7,6 +7,7 @@ import { z } from 'zod';
 export const ProviderSchema = z.object({
   type: z.enum(['nvidia', 'openrouter', 'gemini', 'codex', 'huggingface', 'ollama']),
   apiKey: z.string().optional(),
+  apiKeys: z.array(z.string()).optional(), // Multiple keys for round-robin fallback
   baseUrl: z.string().url().optional(),
   defaultModel: z.string().optional(),
   enabled: z.boolean().default(true),
