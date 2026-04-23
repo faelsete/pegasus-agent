@@ -11,8 +11,9 @@ import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('router');
 
-/** Priority order for text providers */
-const TEXT_PROVIDER_PRIORITY = ['openrouter', 'gemini', 'codex', 'nvidia', 'ollama'];
+/** Priority order for text providers (nvidia first = most stable free) */
+const TEXT_PROVIDER_PRIORITY = ['nvidia', 'openrouter', 'gemini', 'codex', 'ollama'];
+// NOTE: 'huggingface' is intentionally excluded — it only supports image generation
 
 /**
  * Create a LanguageModel from a provider instance + model ID.

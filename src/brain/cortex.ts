@@ -14,7 +14,7 @@ import { getLogger } from '../utils/logger.js';
 // ═══════════════════════════════════════════
 
 const logger = getLogger('cortex');
-const TIMEOUT_MS = 60_000; // 60s per provider attempt
+const TIMEOUT_MS = 120_000; // 120s — free models are slow
 
 export interface ReasonInput {
   userMessage: string;
