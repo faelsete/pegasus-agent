@@ -12,6 +12,10 @@
     "start:cli": "tsx src/index.ts cli",
     "setup": "tsx scripts/setup-wizard.ts",
     "doctor": "tsx src/index.ts doctor",
+    "service:install": "sudo bash scripts/service.sh install",
+    "service:uninstall": "sudo bash scripts/service.sh uninstall",
+    "service:status": "bash scripts/service.sh status",
+    "service:logs": "bash scripts/service.sh follow",
     "build": "tsc",
     "test:fase1": "tsx tests/fase1.ts"
   },
