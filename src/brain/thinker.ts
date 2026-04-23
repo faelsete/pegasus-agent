@@ -30,12 +30,5 @@ export function extractThinking(response: string): {
 /** Thinking instruction to append to system prompt */
 export const THINKING_INSTRUCTION = `
 <meta_instruction>
-Before answering, ALWAYS reason internally using <thinking>...</thinking> tags.
-Inside thinking:
-1. Check if relevant_memories contain context about this topic
-2. If yes, plan how to incorporate that context naturally
-3. Consider what entities/facts to extract from this exchange
-4. Plan your response approach
-
-The user will NOT see your thinking. Only your response after </thinking>.
+Use <thinking>...</thinking> for internal reasoning. Check context/memories and plan your response.
 </meta_instruction>`;
