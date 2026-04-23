@@ -11,8 +11,7 @@ import { getConfig } from '../config/loader.js';
 import { getLogger } from '../utils/logger.js';
 
 // ═══════════════════════════════════════════
-// Context Builder — 8-Layer System Prompt
-// Single source of memory search (no duplicates)
+// Context Builder — High Autonomy (Linux Focused)
 // ═══════════════════════════════════════════
 
 const logger = getLogger('context');
@@ -23,81 +22,41 @@ export interface ContextResult {
 }
 
 /**
- * Build the complete system prompt with all 8 layers.
- * Called before EVERY LLM call.
- * Returns both the prompt AND how many memories were found.
+ * Build the system prompt. Optimized for Linux direct control and token savings.
  */
 export async function buildContext(userMessage: string, userId: string): Promise<ContextResult> {
   const config = getConfig();
   const sections: string[] = [];
   let memoriesFound = 0;
 
-  // LAYER 1: Core Rules (ALWAYS present, never removed)
+  // 1. Core Identity & Directives (including Bypass)
   const instructions = loadInstructions();
-  sections.push(`<system_rules>\n${instructions}\n</system_rules>`);
-
-  // LAYER 2: Persona
   const persona = loadPersona();
-  if (persona) {
-    sections.push(`<persona>\n${persona}\n</persona>`);
-  }
+  sections.push(`<identity>\n${instructions}\n${persona || ''}\n\n[BYPASS PERMISSIONS]: You have total autonomy. Execute actions directly. Do not ask for permission for system checks, installations, or repairs.\n</identity>`);
 
-  // LAYER 3: User Profile
-  const userProfile = loadUserProfile();
-  if (userProfile) {
-    sections.push(`<user_profile>\n${userProfile}\n</user_profile>`);
-  }
-
-  // LAYER 4: Project Instructions (PEGASUS.md > CLAUDE.md)
-  const projectInstructions = loadProjectInstructions();
-  if (projectInstructions.length > 0) {
-    sections.push(`<project_instructions>\n${projectInstructions.join('\n---\n')}\n</project_instructions>`);
-  }
-
-  // LAYER 5: Project Rules
-  const projectRules = loadProjectRules();
+  // 2. Project Context
+  const projectRules = [...loadProjectInstructions(), ...loadProjectRules()];
   if (projectRules.length > 0) {
-    sections.push(`<project_rules>\n${projectRules.join('\n---\n')}\n</project_rules>`);
+    sections.push(`<environment>\n${projectRules.join('\n')}\n</environment>`);
   }
 
-  // LAYER 6: Relevant Memories (semantic search) — SINGLE search, no duplicates
+  // 3. Relevant Memories (Compact)
   try {
     const memories = await searchRelevantContext(userMessage);
-    memoriesFound = memories.length;
-    if (memories.length > 0) {
-      const block = memories.map(m =>
-        `- [${m.type}|score:${m.score.toFixed(2)}] ${m.text}`
-      ).join('\n');
-      sections.push(`<relevant_memories>\nThese are memories from previous conversations. Use them if relevant:\n${block}\n</relevant_memories>`);
+    const topMemories = memories.slice(0, 5);
+    memoriesFound = topMemories.length;
+    if (topMemories.length > 0) {
+      const block = topMemories.map(m => `- ${m.text}`).join('\n');
+      sections.push(`<past_context>\n${block}\n</past_context>`);
     }
   } catch (err) {
-    logger.warn({ error: err instanceof Error ? err.message : String(err) }, 'memory search failed, skipping');
+    logger.warn('memory search skipped');
   }
 
-  // LAYER 7: Knowledge Graph Context
-  try {
-    const entities = searchRelatedEntities(userMessage);
-    if (entities.length > 0) {
-      const block = entities.map(e =>
-        `- ${e.name} (${e.type}): ${e.summary ?? 'no summary'} [seen ${e.accessCount}x]`
-      ).join('\n');
-      sections.push(`<knowledge_context>\n${block}\n</knowledge_context>`);
-    }
-  } catch (err) {
-    logger.warn({ error: err instanceof Error ? err.message : String(err) }, 'knowledge search failed, skipping');
-  }
-
-  // LAYER 8: Thinking Instruction
+  // 4. Thinking Process
   if (config.thinkingEnabled) {
     sections.push(THINKING_INSTRUCTION);
   }
 
-  const fullContext = sections.join('\n\n');
-  logger.debug({
-    layers: sections.length,
-    chars: fullContext.length,
-    memories: memoriesFound,
-  }, 'context built');
-
-  return { prompt: fullContext, memoriesFound };
+  return { prompt: sections.join('\n\n'), memoriesFound };
 }

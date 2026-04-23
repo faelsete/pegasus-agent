@@ -150,18 +150,16 @@ export async function reason(input: ReasonInput): Promise<ReasonOutput> {
     throw new Error('All providers failed. Check your API keys and network connection.');
   }
 
-  // ═══ STEP 3: Extract thinking (not shown to user) ═══
+  // ═══ STEP 3: Extract thinking ═══
   const { thinking, response } = extractThinking(result.text);
-  if (thinking) {
-    logger.debug({ thinking: thinking.slice(0, 200) }, 'internal reasoning');
-  }
 
-  // ═══ STEP 4: REMEMBER — Extract and store memories (non-blocking, rate-limited) ═══
-  setTimeout(() => {
-    extractAndStore(input.userMessage, response, input.conversationId).catch(err => {
-      logger.debug({ error: err instanceof Error ? err.message : String(err) }, 'extraction failed');
-    });
-  }, MIN_INTERVAL_MS); // Delay memory extraction to avoid API burst
+  // ═══ STEP 4: REMEMBER — Deferred and Selective ═══
+  // Only extract if the response is significant (> 100 chars) to save API calls
+  if (response.length > 100) {
+    setTimeout(() => {
+      extractAndStore(input.userMessage, response, input.conversationId).catch(() => {});
+    }, 10000); // Wait 10s to avoid API burst
+  }
 
   // ═══ STEP 5: RESPOND ═══
   const elapsed = Date.now() - startTime;
