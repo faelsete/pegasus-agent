@@ -1,6 +1,6 @@
 import { generateText, type CoreMessage } from 'ai';
 import { buildContext } from './context.js';
-import { selectModel } from './router.js';
+import { getAllTextModels } from './router.js';
 import { extractThinking } from './thinker.js';
 import { extractAndStore } from '../memory/extractor.js';
 import { getAiSdkTools } from '../tools/registry.js';
@@ -10,9 +10,11 @@ import { getLogger } from '../utils/logger.js';
 // ═══════════════════════════════════════════
 // Cortex — Main Reasoning Loop
 // SEARCH → THINK → ACT → REMEMBER → RESPOND
+// With automatic provider fallback
 // ═══════════════════════════════════════════
 
 const logger = getLogger('cortex');
+const TIMEOUT_MS = 45_000; // 45s per provider attempt
 
 export interface ReasonInput {
   userMessage: string;
@@ -29,8 +31,44 @@ export interface ReasonOutput {
 }
 
 /**
+ * Try generateText with a single model, with timeout.
+ * Returns the result or throws on failure/timeout.
+ */
+async function tryGenerate(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  model: any,
+  systemPrompt: string,
+  messages: CoreMessage[],
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tools: any,
+) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+  try {
+    return await generateText({
+      model,
+      system: systemPrompt,
+      messages,
+      tools,
+      maxSteps: 10,
+      temperature: 0.7,
+      abortSignal: controller.signal,
+      onStepFinish: async ({ toolResults }) => {
+        if (toolResults && Array.isArray(toolResults) && toolResults.length > 0) {
+          logger.debug({ count: toolResults.length }, 'tools executed in step');
+        }
+      },
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
  * Main reasoning function. Called for every user message.
  * Implements the SEARCH → THINK → ACT → REMEMBER → RESPOND pipeline.
+ * Automatically falls back to next provider if one fails or times out.
  */
 export async function reason(input: ReasonInput): Promise<ReasonOutput> {
   const startTime = Date.now();
@@ -40,9 +78,6 @@ export async function reason(input: ReasonInput): Promise<ReasonOutput> {
 
   const memories = await searchRelevantContext(input.userMessage);
   const systemPrompt = await buildContext(input.userMessage, input.userId);
-
-  // ═══ STEP 2: THINK + ACT — Generate response with tools ═══
-  const model = selectModel('text');
   const tools = getAiSdkTools();
 
   const messages: CoreMessage[] = [
@@ -50,19 +85,36 @@ export async function reason(input: ReasonInput): Promise<ReasonOutput> {
     { role: 'user' as const, content: input.userMessage },
   ];
 
-  const result = await generateText({
-    model,
-    system: systemPrompt,
-    messages,
-    tools,
-    maxSteps: 10,
-    temperature: 0.7,
-    onStepFinish: async ({ toolResults }) => {
-      if (toolResults && Array.isArray(toolResults) && toolResults.length > 0) {
-        logger.debug({ count: toolResults.length }, 'tools executed in step');
-      }
-    },
-  });
+  // ═══ STEP 2: THINK + ACT — Try each provider with fallback ═══
+  const models = getAllTextModels();
+  if (models.length === 0) {
+    throw new Error('No text providers available. Run: npm run setup');
+  }
+
+  let result;
+  let usedProvider = 'unknown';
+
+  for (const { model, providerType, modelId } of models) {
+    try {
+      logger.info({ provider: providerType, model: modelId }, 'trying provider');
+      result = await tryGenerate(model, systemPrompt, messages, tools);
+      usedProvider = providerType;
+      logger.info({ provider: providerType }, 'provider responded');
+      break; // success, stop trying
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const isTimeout = errMsg.includes('abort') || errMsg.includes('AbortError');
+      logger.warn(
+        { provider: providerType, model: modelId, error: errMsg, timeout: isTimeout },
+        isTimeout ? 'provider timed out, trying fallback' : 'provider failed, trying fallback'
+      );
+      // Continue to next provider
+    }
+  }
+
+  if (!result) {
+    throw new Error('All providers failed. Check your API keys and network connection.');
+  }
 
   // ═══ STEP 3: Extract thinking (not shown to user) ═══
   const { thinking, response } = extractThinking(result.text);
@@ -81,6 +133,7 @@ export async function reason(input: ReasonInput): Promise<ReasonOutput> {
 
   logger.info({
     elapsed: `${elapsed}ms`,
+    provider: usedProvider,
     tools: toolsUsed.length,
     memories: memories.length,
     responseLen: response.length,

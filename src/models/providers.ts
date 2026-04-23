@@ -64,7 +64,7 @@ export function getProviderConfig(type: string): ProviderConfig | undefined {
 /** Get the first available text provider */
 export function getDefaultTextProvider(): ProviderConfig {
   const config = getConfig();
-  const textProviders = ['nvidia', 'openrouter', 'gemini', 'codex', 'ollama'];
+  const textProviders = ['openrouter', 'gemini', 'codex', 'nvidia', 'ollama'];
   const provider = config.providers.find(p => textProviders.includes(p.type) && p.enabled);
   if (!provider) {
     throw new Error('No text provider configured. Run: npm run setup');

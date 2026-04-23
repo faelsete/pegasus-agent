@@ -1,45 +1,75 @@
 import { createProvider, getDefaultTextProvider, getProviderConfig } from '../models/providers.js';
 import type { ProviderConfig } from '../config/schema.js';
 import type { TaskType } from '../models/types.js';
+import { getConfig } from '../config/loader.js';
 import { getLogger } from '../utils/logger.js';
 
 // ═══════════════════════════════════════════
 // Model Router — selects model by task type
+// with fallback chain support
 // ═══════════════════════════════════════════
 
 const logger = getLogger('router');
 
+/** Priority order for text providers */
+const TEXT_PROVIDER_PRIORITY = ['openrouter', 'gemini', 'codex', 'nvidia', 'ollama'];
+
 /**
  * Create a LanguageModel from a provider instance + model ID.
- * Handles both createOpenAI (callable) and createOpenAICompatible (.chatModel())
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function getModel(providerConfig: ProviderConfig, fallbackModel: string): any {
   const sdk = createProvider(providerConfig);
   const modelId = providerConfig.defaultModel ?? fallbackModel;
 
-  // createOpenAICompatible returns an object with .chatModel()
-  // createOpenAI and createGoogleGenerativeAI return a callable function
   if (typeof sdk === 'function') {
     return sdk(modelId);
   }
   if (sdk && typeof sdk === 'object' && 'chatModel' in sdk) {
     return (sdk as { chatModel: (id: string) => unknown }).chatModel(modelId);
   }
-  // Fallback: try calling as function
   return (sdk as unknown as (id: string) => unknown)(modelId);
 }
 
 /**
- * Select the appropriate model for a given task type.
- * Priority: configured default → fallback chain
+ * Get ALL available text models ordered by priority.
+ * Used by cortex for fallback: if first fails, try next.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function getAllTextModels(): Array<{ model: any; providerType: string; modelId: string }> {
+  const config = getConfig();
+  const results: Array<{ model: unknown; providerType: string; modelId: string }> = [];
+
+  for (const type of TEXT_PROVIDER_PRIORITY) {
+    const provider = config.providers.find(p => p.type === type && p.enabled);
+    if (provider) {
+      try {
+        const fallback = type === 'nvidia' ? 'meta/llama-3.1-70b-instruct'
+          : type === 'ollama' ? 'llama3.1'
+          : type === 'codex' ? 'gpt-4o'
+          : 'meta-llama/llama-3.1-70b-instruct';
+        const model = getModel(provider, fallback);
+        const modelId = provider.defaultModel ?? fallback;
+        results.push({ model, providerType: type, modelId });
+      } catch (err) {
+        logger.warn({ provider: type, error: err instanceof Error ? err.message : String(err) }, 'provider init failed, skipping');
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Select the first available model for a given task type.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function selectModel(task: TaskType): any {
   switch (task) {
     case 'text': {
       const provider = getDefaultTextProvider();
-      logger.debug({ provider: provider.type, model: provider.defaultModel }, 'selected text model');
+      const modelId = provider.defaultModel ?? 'meta/llama-3.1-70b-instruct';
+      logger.debug({ provider: provider.type, model: modelId }, 'selected text model');
       return getModel(provider, 'meta/llama-3.1-70b-instruct');
     }
 
