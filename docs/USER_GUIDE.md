@@ -24,11 +24,11 @@
 
 ## 1. Instalação
 
-### Instalar do Zero (servidor limpo)
+### Instalar e Verificar
 ```bash
-curl -fsSL https://raw.githubusercontent.com/faelsete/pegasus-agent/main/scripts/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/faelsete/pegasus-agent/main/scripts/install.sh | bash
 ```
-Pronto. O script faz tudo: instala Node.js, baixa o código, pede suas chaves, e inicia o bot.
+O script agora é um **diagnosticador inteligente**: ele verifica se o seu servidor tem tudo que o Pegasus precisa (Node 22, Git, Python, etc.) e fornece o comando exato para instalar o que faltar. Após a verificação, ele configura o ambiente de forma segura.
 
 ### Atualizar para Nova Versão
 ```bash
@@ -206,13 +206,15 @@ Qualquer serviço que tenha endpoint `/v1/chat/completions` funciona. Use o tipo
 }
 ```
 
-> **⚠️ Importante:** A ordem dos providers no array define a prioridade do fallback.
-> O primeiro é o principal, se ele falhar tenta o segundo, e assim vai.
+#### 💡 Múltiplas Contas e Round-Robin Fallback
+Agora você pode cadastrar **várias API Keys** por provedor para evitar bloqueios por Rate Limit. Se você tem 5 contas Gemini ou 3 NVIDIA, o Pegasus vai alternar entre elas automaticamente se uma falhar.
 
-Depois de editar, reinicie:
-```bash
-sudo systemctl restart pegasus
-```
+**Como configurar:**
+No `npm run setup`, quando pedir a API Key, basta colar as chaves separadas por vírgula:
+`key1, key2, key3, key4`
+
+**Vantagem:**
+Isso garante que seu bot continue respondendo mesmo que uma conta gratuita atinja o limite de mensagens por minuto. O Pegasus testa cada chave em sequência até encontrar uma funcional.
 
 ---
 
@@ -520,7 +522,9 @@ cd ~/pegasus-agent && npm run doctor
 | Bot responde lento | Mude para modelo mais rápido → `npm run model` → busque "flash" |
 | "Esqueceu tudo" | Verifique se `~/.pegasus/data/pegasus.db` existe |
 | Memória não funciona | Verifique se tem provider de embedding configurado |
-| Erro de timeout | NVIDIA congestionada → o fallback vai usar o próximo provider |
+| Erro de timeout | NVIDIA congestionada → o fallback vai usar a próxima chave ou próximo provider |
+| Rate Limit Strike | O sistema Anti-Strike agora bloqueia flood e impõe 3s entre mensagens |
+| Muitas chamadas à API | Otimizado: busca de memória unificada reduz consumo de tokens em 50% |
 
 ### Ver qual modelo está sendo usado
 ```bash

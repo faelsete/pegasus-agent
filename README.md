@@ -39,24 +39,25 @@ A estrutura é dividida em camadas modulares para garantir escalabilidade e fác
 
 ---
 
-## 🛠️ Instalação
+## 🛠️ Instalação e Requisitos
 
-**UM COMANDO** e pronto. Copia, cola no terminal do servidor e segue as instruções:
+O Pegasus agora utiliza um **script de diagnóstico** para garantir que seu servidor está pronto antes de instalar qualquer coisa. Isso evita travamentos em servidores lentos ou instáveis.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/faelsete/pegasus-agent/main/scripts/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/faelsete/pegasus-agent/main/scripts/install.sh | bash
 ```
 
-O instalador faz tudo sozinho:
-1. ✅ Instala Node.js 22 (se não tiver)
-2. ✅ Baixa o Pegasus
-3. ✅ Instala dependências
-4. ✅ Abre o wizard interativo (pede suas chaves)
-5. ✅ Instala como serviço systemd (24/7)
-6. ✅ Inicia o bot
+O script irá:
+1. 🔍 Verificar requisitos (Node.js 22+, Git, Python3, Build-essential).
+2. 💡 Fornecer o comando exato de `apt install` caso falte algo.
+3. 🚀 Clonar e configurar o ambiente de forma segura.
+
+### 🧠 Alta Disponibilidade (Multi-Key Fallback)
+Agora você pode cadastrar **múltiplas API Keys** por provedor (ex: 5 contas Gemini ou 3 NVIDIA). Se uma chave atingir o limite de uso (Rate Limit), o Pegasus pula automaticamente para a próxima chave, garantindo operação 24/7 sem interrupções.
 
 > [!TIP]
-> Requisitos: Ubuntu/Debian com acesso root. Só isso.
+> No `npm run setup`, basta colar suas chaves separadas por vírgula.
+
 
 ### Já instalou e quer reconfigurar?
 ```bash
