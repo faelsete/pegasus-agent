@@ -41,9 +41,22 @@ function getEmbeddingModel(): any {
   }
 
   // Use createOpenAICompatible for third-party endpoints (OpenRouter, NVIDIA)
+  // Determine the correct base URL per provider type
+  let baseURL: string;
+  switch (provider.type) {
+    case 'nvidia':
+      baseURL = provider.baseUrl ?? 'https://integrate.api.nvidia.com/v1';
+      break;
+    case 'openrouter':
+      baseURL = 'https://openrouter.ai/api/v1';
+      break;
+    default:
+      baseURL = provider.baseUrl ?? 'https://openrouter.ai/api/v1';
+  }
+
   const compatible = createOpenAICompatible({
     name: `${provider.type}-embeddings`,
-    baseURL: provider.baseUrl ?? 'https://openrouter.ai/api/v1',
+    baseURL,
     headers: {
       Authorization: `Bearer ${provider.apiKey}`,
     },

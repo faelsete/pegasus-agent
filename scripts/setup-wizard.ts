@@ -69,8 +69,8 @@ async function main(): Promise<void> {
     providers: [],
     telegram: { token: '', allowedChatIds: [], rateLimitPerMinute: 30 },
     memory: {
-      embeddingModel: 'openai/text-embedding-3-small',
-      embeddingProvider: 'openrouter',
+      embeddingModel: 'nvidia/nv-embedqa-e5-v5',
+      embeddingProvider: 'nvidia',
       maxSearchResults: 10,
       autoExtract: true,
       dreamIntervalMs: 21_600_000,
@@ -96,19 +96,23 @@ async function main(): Promise<void> {
   console.log('\n═══ ETAPA 2: Provedores de IA ═══\n');
 
   // NVIDIA
-  const nvidiaKey = await rl.question('  🟢 NVIDIA NIM API Key (Enter para pular): ');
+  const nvidiaKey = await rl.question('  🟢 NVIDIA NIM API Key (grátis em build.nvidia.com) (Enter para pular): ');
   if (nvidiaKey.trim()) {
     const model = (await rl.question('    Modelo [meta/llama-3.1-70b-instruct]: ')) || 'meta/llama-3.1-70b-instruct';
     config.providers.push({ type: 'nvidia', apiKey: nvidiaKey.trim(), baseUrl: 'https://integrate.api.nvidia.com/v1', defaultModel: model, enabled: true });
-    console.log('    ✅ NVIDIA configurado\n');
+    // Auto-set embeddings to NVIDIA free
+    config.memory.embeddingProvider = 'nvidia';
+    config.memory.embeddingModel = 'nvidia/nv-embedqa-e5-v5';
+    console.log('    ✅ NVIDIA configurado (embeddings grátis ativados!)\n');
   }
 
   // OpenRouter
+  console.log('  💡 Modelos grátis no OpenRouter: deepseek/deepseek-chat-v3-0324:free, qwen/qwen3-235b-a22b:free');
   const orKey = await rl.question('  🟣 OpenRouter API Key (Enter para pular): ');
   if (orKey.trim()) {
-    const model = (await rl.question('    Modelo [anthropic/claude-3.5-sonnet]: ')) || 'anthropic/claude-3.5-sonnet';
+    const model = (await rl.question('    Modelo [deepseek/deepseek-chat-v3-0324:free] (grátis!): ')) || 'deepseek/deepseek-chat-v3-0324:free';
     config.providers.push({ type: 'openrouter', apiKey: orKey.trim(), baseUrl: 'https://openrouter.ai/api/v1', defaultModel: model, enabled: true });
-    console.log('    ✅ OpenRouter configurado\n');
+    console.log('    ✅ OpenRouter configurado (modelo grátis!)\n');
   }
 
   // Gemini
@@ -146,14 +150,18 @@ async function main(): Promise<void> {
     return;
   }
 
-  // ═══ Step 3: Embeddings ═══
+  // ═══ Step 3: Embeddings (auto-select free) ═══
   console.log('═══ ETAPA 3: Embeddings ═══\n');
 
-  const hasOpenRouter = config.providers.some(p => p.type === 'openrouter');
-  if (hasOpenRouter) {
+  const hasNvidia = config.providers.some(p => p.type === 'nvidia');
+  if (hasNvidia) {
+    config.memory.embeddingProvider = 'nvidia';
+    config.memory.embeddingModel = 'nvidia/nv-embedqa-e5-v5';
+    console.log('  ✅ Embeddings via NVIDIA (GRÁTIS! nv-embedqa-e5-v5)\n');
+  } else if (config.providers.some(p => p.type === 'openrouter')) {
     config.memory.embeddingProvider = 'openrouter';
     config.memory.embeddingModel = 'openai/text-embedding-3-small';
-    console.log('  ✅ Embeddings via OpenRouter (text-embedding-3-small)\n');
+    console.log('  ✅ Embeddings via OpenRouter (text-embedding-3-small — custo mínimo)\n');
   } else {
     const embProvider = (await rl.question('  Provider de embedding [nvidia/openrouter/ollama]: ')) || 'nvidia';
     config.memory.embeddingProvider = embProvider as 'nvidia' | 'openrouter' | 'ollama';
