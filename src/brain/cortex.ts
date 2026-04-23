@@ -76,8 +76,22 @@ export async function reason(input: ReasonInput): Promise<ReasonOutput> {
   // ═══ STEP 1: SEARCH — Build context with relevant memories ═══
   logger.info({ msg: input.userMessage.slice(0, 80) }, 'reasoning started');
 
-  const memories = await searchRelevantContext(input.userMessage);
-  const systemPrompt = await buildContext(input.userMessage, input.userId);
+  // Memory search is non-fatal — if it fails, continue without memories
+  let memories: Awaited<ReturnType<typeof searchRelevantContext>> = [];
+  try {
+    memories = await searchRelevantContext(input.userMessage);
+  } catch (err) {
+    logger.warn({ error: err instanceof Error ? err.message : String(err) }, 'memory search failed, continuing without');
+  }
+
+  let systemPrompt: string;
+  try {
+    systemPrompt = await buildContext(input.userMessage, input.userId);
+  } catch (err) {
+    logger.warn({ error: err instanceof Error ? err.message : String(err) }, 'context build failed, using minimal');
+    systemPrompt = 'You are Pegasus, a helpful AI assistant. Respond in the user\'s language.';
+  }
+
   const tools = getAiSdkTools();
 
   const messages: CoreMessage[] = [

@@ -95,9 +95,14 @@ process.on('SIGTERM', () => {
 });
 
 process.on('uncaughtException', (err) => {
-  logger.error({ err: err.message }, 'uncaught exception');
-  closeDatabase();
-  process.exit(1);
+  logger.error({ err: err.message, stack: err.stack }, 'uncaught exception (recovered)');
+  // DON'T exit — let the process survive
+});
+
+process.on('unhandledRejection', (reason) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  logger.error({ reason: msg }, 'unhandled rejection (recovered)');
+  // DON'T exit — let the process survive
 });
 
 main().catch(err => {

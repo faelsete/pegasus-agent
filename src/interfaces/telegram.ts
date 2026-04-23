@@ -60,16 +60,18 @@ function getOrCreateConversationId(chatId: number): string {
   return id;
 }
 
-/** Build conversation history from SQLite — gets MORE context */
+/** Build conversation history from SQLite — LIMITED to prevent context overflow */
 function getHistory(conversationId: string): CoreMessage[] {
   const db = getDb();
+  // Only get last 15 messages to keep context size manageable
   const rows = db.prepare(
-    'SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 40'
+    'SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 15'
   ).all(conversationId) as Array<{ role: string; content: string }>;
 
   return rows.reverse().map(r => ({
     role: r.role as 'user' | 'assistant',
-    content: r.content,
+    // Truncate each message to prevent token overflow
+    content: r.content.length > 2000 ? r.content.slice(0, 2000) + '...(truncado)' : r.content,
   }));
 }
 
@@ -232,19 +234,33 @@ export function createBot(config: PegasusConfig): Bot<PegasusContext> {
         conversationId: ctx.session.conversationId,
       });
 
+      // Guard against empty responses
+      const responseText = result.response?.trim();
+      if (!responseText) {
+        logger.warn('AI returned empty response, sending fallback');
+        await ctx.reply('🤔 Não consegui gerar uma resposta. Tente reformular.');
+        return;
+      }
+
       // Save assistant response
-      saveMessage(ctx.session.conversationId, 'assistant', result.response, result.thinking, result.toolsUsed);
+      saveMessage(ctx.session.conversationId, 'assistant', responseText, result.thinking, result.toolsUsed);
 
       // Split long messages (Telegram limit: 4096)
-      const chunks = splitMessage(result.response, 4000);
+      const chunks = splitMessage(responseText, 4000);
       for (const chunk of chunks) {
         await ctx.reply(chunk, { parse_mode: 'Markdown' }).catch(() =>
           ctx.reply(chunk) // retry without markdown if it fails
         );
       }
     } catch (error) {
-      logger.error({ error: error instanceof Error ? error.message : String(error) }, 'reasoning failed');
-      await ctx.reply('⚠️ Erro ao processar mensagem. Tente novamente.');
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error({ error: errMsg }, 'reasoning failed');
+      // Don't crash — send user-friendly error
+      if (errMsg.includes('All providers failed')) {
+        await ctx.reply('⚠️ Todos os provedores de IA falharam. Tentando de novo em breve...');
+      } else {
+        await ctx.reply('⚠️ Erro ao processar mensagem. Tente novamente.');
+      }
     } finally {
       clearInterval(typingInterval);
     }
@@ -255,7 +271,12 @@ export function createBot(config: PegasusConfig): Bot<PegasusContext> {
   bot.catch((err) => {
     const e = err.error;
     if (e instanceof GrammyError) {
-      logger.error({ desc: e.description, code: e.error_code }, 'Telegram API error');
+      // Handle 409 Conflict (another instance using same token)
+      if (e.error_code === 409) {
+        logger.error('CONFLICT: Another bot instance is running with the same token! This instance will keep retrying.');
+      } else {
+        logger.error({ desc: e.description, code: e.error_code }, 'Telegram API error');
+      }
     } else if (e instanceof HttpError) {
       logger.error({ err: String(e) }, 'Network error');
     } else {
