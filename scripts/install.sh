@@ -2,7 +2,7 @@
 
 # ═══════════════════════════════════════════
 # 🐴 PEGASUS — Linux Installer
-# Funciona via curl | bash ou localmente
+# Funciona via: curl ... | bash  E  bash scripts/install.sh
 # ═══════════════════════════════════════════
 
 set -e
@@ -58,7 +58,6 @@ echo -e "${GREEN}✓${NC} Todas dependências OK"
 INSTALL_DIR="$HOME/pegasus-agent"
 
 if [ -f "package.json" ] && grep -q "pegasus" package.json 2>/dev/null; then
-    # Já estamos dentro do repo
     INSTALL_DIR="$(pwd)"
     echo -e "\n${BLUE}📂 Usando diretório atual: ${INSTALL_DIR}${NC}"
 elif [ -d "$INSTALL_DIR" ]; then
@@ -68,7 +67,6 @@ elif [ -d "$INSTALL_DIR" ]; then
 else
     echo -e "\n${BLUE}📥 Clonando Pegasus em ${INSTALL_DIR}...${NC}"
     git clone https://github.com/faelsete/pegasus-agent.git "$INSTALL_DIR"
-    cd "$INSTALL_DIR"
 fi
 
 cd "$INSTALL_DIR"
@@ -81,13 +79,13 @@ npm install --quiet 2>&1 | tail -1
 echo -e "${BLUE}🏗️  Compilando TypeScript...${NC}"
 npm run build
 
-# ═══ 6. Setup Wizard ═══
+# ═══ 6. Setup Wizard (stdin vem do terminal, não do pipe) ═══
 echo -e "\n${YELLOW}⚙️  Configuração interativa:${NC}"
-npm run setup
+npm run setup </dev/tty
 
 # ═══ 7. Serviço systemd (opcional) ═══
 echo ""
-read -rp "Instalar como serviço 24/7? (s/N): " INSTALL_SVC
+read -rp "Instalar como serviço 24/7? (s/N): " INSTALL_SVC </dev/tty
 if [[ "$INSTALL_SVC" =~ ^[Ss]$ ]]; then
     sudo bash scripts/service.sh install
 fi
