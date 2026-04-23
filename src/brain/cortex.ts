@@ -14,7 +14,7 @@ import { getLogger } from '../utils/logger.js';
 // ═══════════════════════════════════════════
 
 const logger = getLogger('cortex');
-const TIMEOUT_MS = 45_000; // 45s per provider attempt
+const TIMEOUT_MS = 60_000; // 60s per provider attempt
 
 export interface ReasonInput {
   userMessage: string;
@@ -90,6 +90,8 @@ export async function reason(input: ReasonInput): Promise<ReasonOutput> {
   if (models.length === 0) {
     throw new Error('No text providers available. Run: npm run setup');
   }
+
+  logger.info({ providers: models.length, chain: models.map(m => `${m.providerType}:${m.modelId}`).join(' → ') }, 'fallback chain');
 
   let result;
   let usedProvider = 'unknown';
