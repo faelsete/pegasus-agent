@@ -75,8 +75,7 @@ SyslogIdentifier=pegasus
 PrivateTmp=true
 
 # Resources
-MemoryMax=1G
-TasksMax=100
+TasksMax=256
 
 [Install]
 WantedBy=multi-user.target
