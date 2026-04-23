@@ -4,18 +4,22 @@ import { loadConfig } from './config/loader.js';
 import { Brainstem } from './brain/brainstem.js';
 import { getLogger } from './utils/logger.js';
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 // ═══════════════════════════════════════════
 // 🐴 PEGASUS — Entry Point
 // ═══════════════════════════════════════════
 
 const logger = getLogger('main');
+const VERSION = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf-8')).version as string;
 
 async function main(): Promise<void> {
   const mode = process.argv[2] ?? 'telegram';
 
   console.log('');
-  console.log('  🐴 P E G A S U S');
-  console.log('  ─────────────────');
+  console.log(`  🐴 P E G A S U S  v${VERSION}`);
+  console.log('  ─────────────────────────');
   console.log('');
 
   switch (mode) {

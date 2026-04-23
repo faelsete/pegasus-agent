@@ -1,6 +1,6 @@
 {
   "name": "pegasus-agent",
-  "version": "1.0.0",
+  "version": "2026_04_23",
   "description": "Pegasus — Autonomous AI Agent with semantic memory",
   "type": "module",
   "engines": {
