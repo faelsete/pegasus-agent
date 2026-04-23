@@ -16,6 +16,7 @@ const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 interface ProviderEntry {
   type: string;
   apiKey?: string;
+  apiKeys?: string[];
   baseUrl?: string;
   defaultModel?: string;
   enabled: boolean;

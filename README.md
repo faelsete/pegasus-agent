@@ -39,24 +39,26 @@ A estrutura é dividida em camadas modulares para garantir escalabilidade e fác
 
 ---
 
-## 🛠️ Instalação e Requisitos
+## 🛠️ Instalação (Ubuntu/Debian)
 
-O Pegasus agora utiliza um **script de diagnóstico** para garantir que seu servidor está pronto antes de instalar qualquer coisa. Isso evita travamentos em servidores lentos ou instáveis.
+**Um comando** — o script verifica dependências, clona o repo, builda e configura:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/faelsete/pegasus-agent/main/scripts/install.sh | bash
 ```
 
-O script irá:
-1. 🔍 Verificar requisitos (Node.js 22+, Git, Python3, Build-essential).
-2. 💡 Fornecer o comando exato de `apt install` caso falte algo.
-3. 🚀 Clonar e configurar o ambiente de forma segura.
+O que acontece:
+1. ✅ Verifica dependências (Node 20+, Git, GCC). Se faltar algo, mostra o `apt install` exato.
+2. 📥 Clona o repositório em `~/pegasus-agent`.
+3. 📦 Instala dependências e compila o TypeScript.
+4. ⚙️ Abre o wizard interativo (pede suas chaves de API e token do Telegram).
+5. 🚀 Oferece instalar como serviço systemd (24/7).
 
 ### 🧠 Alta Disponibilidade (Multi-Key Fallback)
-Agora você pode cadastrar **múltiplas API Keys** por provedor (ex: 5 contas Gemini ou 3 NVIDIA). Se uma chave atingir o limite de uso (Rate Limit), o Pegasus pula automaticamente para a próxima chave, garantindo operação 24/7 sem interrupções.
+Cadastre **múltiplas API Keys** por provedor (ex: 5 contas Gemini ou 3 NVIDIA). Se uma chave atingir rate limit, o Pegasus pula automaticamente para a próxima.
 
 > [!TIP]
-> No `npm run setup`, basta colar suas chaves separadas por vírgula.
+> No `npm run setup`, separe chaves com vírgula: `key1,key2,key3`
 
 
 ### Já instalou e quer reconfigurar?

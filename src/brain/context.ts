@@ -1,11 +1,10 @@
 import {
   loadInstructions,
   loadPersona,
-  loadUserProfile,
   loadProjectInstructions,
   loadProjectRules,
 } from '../memory/instructions.js';
-import { searchRelevantContext, searchRelatedEntities } from '../memory/search.js';
+import { searchRelevantContext } from '../memory/search.js';
 import { THINKING_INSTRUCTION } from './thinker.js';
 import { getConfig } from '../config/loader.js';
 import { getLogger } from '../utils/logger.js';

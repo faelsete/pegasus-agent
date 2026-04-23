@@ -24,11 +24,11 @@
 
 ## 1. Instalação
 
-### Instalar e Verificar
+### Instalar do Zero (Ubuntu/Debian)
 ```bash
 curl -fsSL https://raw.githubusercontent.com/faelsete/pegasus-agent/main/scripts/install.sh | bash
 ```
-O script agora é um **diagnosticador inteligente**: ele verifica se o seu servidor tem tudo que o Pegasus precisa (Node 22, Git, Python, etc.) e fornece o comando exato para instalar o que faltar. Após a verificação, ele configura o ambiente de forma segura.
+O script verifica dependências (Node 20+, Git, GCC), clona o repo, builda e abre o wizard de configuração. Se faltar algo, mostra o comando `apt install` exato.
 
 ### Atualizar para Nova Versão
 ```bash
@@ -111,11 +111,15 @@ sudo systemctl restart pegasus
 | `deepseek/deepseek-chat-v3-0324:free` | Gratuito | Free |
 | `qwen/qwen3-235b-a22b:free` | Gratuito | Free |
 
-**NVIDIA NIM:**
+**NVIDIA NIM (testados e estáveis):**
 | Modelo | Tipo |
 |---|---|
-| `meta/llama-3.1-70b-instruct` | Padrão |
-| `nvidia/llama-3.1-nemotron-70b-instruct` | Otimizado |
+| `qwen/qwen3.5-122b-a10b` | Principal (recomendado) |
+| `qwen/qwen3.5-397b-a17b` | Top qualidade |
+| `openai/gpt-oss-120b` | Alternativo estável |
+| `openai/gpt-oss-20b` | Leve e rápido |
+| `stepfun-ai/step-3.5-flash` | Flash |
+| `moonshotai/kimi-k2-thinking` | Raciocínio |
 
 **Google Gemini:**
 | Modelo | Tipo |
@@ -582,7 +586,7 @@ sudo systemctl restart pegasus
 │   ├── config/                 ← Schema, Loader
 │   └── db/                     ← SQLite
 ├── scripts/
-│   ├── install.sh              ← Instalador automático
+│   ├── install.sh              ← Instalador Linux (verifica deps + clona + builda)
 │   ├── service.sh              ← Gerenciador systemd
 │   ├── setup-wizard.ts         ← Wizard interativo
 │   └── switch-model.ts         ← Trocar modelo
