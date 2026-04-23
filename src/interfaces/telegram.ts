@@ -25,6 +25,9 @@ type PegasusContext = Context & SessionFlavor<SessionData>;
 
 // Rate limiter state
 const rateLimiter = new Map<number, number[]>();
+const processingLock = new Map<number, boolean>(); // 1 message at a time per chat
+const lastMessageTime = new Map<number, number>(); // cooldown tracking
+const MESSAGE_COOLDOWN_MS = 3_000; // 3s min between processing messages
 
 function checkRateLimit(chatId: number, maxPerMinute: number): boolean {
   const now = Date.now();
@@ -212,6 +215,27 @@ export function createBot(config: PegasusConfig): Bot<PegasusContext> {
 
   bot.on('message:text', async (ctx) => {
     if (ctx.message.text.startsWith('/')) return; // skip unknown commands
+    const chatId = ctx.chat?.id ?? 0;
+
+    // ─── Anti-strike: reject if already processing another message ───
+    if (processingLock.get(chatId)) {
+      logger.debug({ chatId }, 'message dropped — still processing previous');
+      await ctx.reply('⏳ Ainda processando a mensagem anterior, aguarde...');
+      return;
+    }
+
+    // ─── Anti-strike: enforce cooldown between messages ───
+    const lastTime = lastMessageTime.get(chatId) ?? 0;
+    const elapsed = Date.now() - lastTime;
+    if (elapsed < MESSAGE_COOLDOWN_MS) {
+      const waitSec = Math.ceil((MESSAGE_COOLDOWN_MS - elapsed) / 1000);
+      await ctx.reply(`⏳ Aguarde ${waitSec}s entre mensagens.`);
+      return;
+    }
+
+    // Lock this chat
+    processingLock.set(chatId, true);
+    lastMessageTime.set(chatId, Date.now());
 
     await ctx.replyWithChatAction('typing');
     ctx.session.messageCount++;
@@ -255,7 +279,6 @@ export function createBot(config: PegasusConfig): Bot<PegasusContext> {
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
       logger.error({ error: errMsg }, 'reasoning failed');
-      // Don't crash — send user-friendly error
       if (errMsg.includes('All providers failed')) {
         await ctx.reply('⚠️ Todos os provedores de IA falharam. Tentando de novo em breve...');
       } else {
@@ -263,6 +286,7 @@ export function createBot(config: PegasusConfig): Bot<PegasusContext> {
       }
     } finally {
       clearInterval(typingInterval);
+      processingLock.set(chatId, false); // Release lock
     }
   });
 
