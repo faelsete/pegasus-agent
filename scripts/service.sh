@@ -80,6 +80,8 @@ Description=Pegasus Autonomous AI Agent
 Documentation=https://github.com/faelsete/pegasus-agent
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -88,8 +90,6 @@ WorkingDirectory=${WORK_DIR}
 ExecStart=${NODE_PATH} --import tsx/esm src/index.ts
 Restart=always
 RestartSec=10
-StartLimitIntervalSec=60
-StartLimitBurst=5
 
 # Environment
 Environment=NODE_ENV=production
