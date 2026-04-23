@@ -34,16 +34,46 @@ check_root() {
 install_service() {
     echo -e "${YELLOW}► Instalando serviço systemd...${NC}"
 
-    # Detect node path
-    NODE_PATH=$(which node 2>/dev/null || echo "/usr/bin/node")
-    TSX_PATH=$(which tsx 2>/dev/null || echo "")
-
     # Detect user
     INSTALL_USER=$(logname 2>/dev/null || echo "root")
     INSTALL_HOME=$(eval echo "~${INSTALL_USER}")
     WORK_DIR="${PROJECT_DIR}"
 
-    # Generate service file from template
+    # Detect node path — check fnm, nvm, volta, then system
+    NODE_PATH=""
+    for candidate in \
+        "${INSTALL_HOME}/.local/share/fnm/aliases/default/bin/node" \
+        "${INSTALL_HOME}/.fnm/aliases/default/bin/node" \
+        "${INSTALL_HOME}/.nvm/versions/node"/*/bin/node \
+        "${INSTALL_HOME}/.volta/bin/node" \
+        "$(which node 2>/dev/null)" \
+        "/usr/local/bin/node" \
+        "/usr/bin/node"; do
+        if [ -x "$candidate" ] 2>/dev/null; then
+            NODE_PATH="$candidate"
+            break
+        fi
+    done
+
+    if [ -z "$NODE_PATH" ]; then
+        echo -e "${RED}✗ Node.js não encontrado! Instale com: curl -fsSL https://fnm.vercel.app/install | bash${NC}"
+        exit 1
+    fi
+
+    NODE_VERSION=$("$NODE_PATH" --version 2>/dev/null || echo "unknown")
+    NODE_DIR=$(dirname "$NODE_PATH")
+    echo -e "${GREEN}  Node: ${NODE_PATH} (${NODE_VERSION})${NC}"
+
+    # Rebuild native modules for this exact node version
+    echo -e "${YELLOW}► Recompilando módulos nativos...${NC}"
+    cd "$WORK_DIR"
+    PATH="${NODE_DIR}:$PATH" npm rebuild better-sqlite3 2>/dev/null || true
+    echo -e "${GREEN}✓ Módulos recompilados${NC}"
+
+    # Build full PATH including node manager dirs
+    FULL_PATH="${NODE_DIR}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${INSTALL_HOME}/.local/bin"
+
+    # Generate service file
     cat > "$SERVICE_FILE" << EOF
 [Unit]
 Description=Pegasus Autonomous AI Agent
@@ -64,7 +94,7 @@ StartLimitBurst=5
 # Environment
 Environment=NODE_ENV=production
 Environment=HOME=${INSTALL_HOME}
-Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${INSTALL_HOME}/.local/bin
+Environment=PATH=${FULL_PATH}
 
 # Logging
 StandardOutput=journal
@@ -87,6 +117,7 @@ EOF
 
     echo -e "${GREEN}✓ Serviço instalado e habilitado no boot${NC}"
     echo -e "${CYAN}  Arquivo: ${SERVICE_FILE}${NC}"
+    echo -e "${CYAN}  Node: ${NODE_PATH} (${NODE_VERSION})${NC}"
     echo -e "${CYAN}  User: ${INSTALL_USER}${NC}"
     echo -e "${CYAN}  WorkDir: ${WORK_DIR}${NC}\n"
 
@@ -101,7 +132,7 @@ EOF
     read -r answer
     if [[ "$answer" != "n" && "$answer" != "N" ]]; then
         systemctl start "$SERVICE_NAME"
-        sleep 2
+        sleep 3
         systemctl status "$SERVICE_NAME" --no-pager
     fi
 }
