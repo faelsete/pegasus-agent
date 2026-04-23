@@ -39,32 +39,34 @@ A estrutura é dividida em camadas modulares para garantir escalabilidade e fác
 
 ---
 
-## 🛠️ Instalação e Setup
+## 🛠️ Instalação
 
-O Pegasus foi otimizado para ambientes **Linux/WSL**.
+**UM COMANDO** e pronto. Copia, cola no terminal do servidor e segue as instruções:
 
-### 1. Clonagem e Dependências
 ```bash
-git clone https://github.com/faelsete/pegasus-agent.git
-cd pegasus-agent
-npm install
+curl -fsSL https://raw.githubusercontent.com/faelsete/pegasus-agent/main/scripts/install.sh | sudo bash
 ```
 
-### 2. Instalação Automatizada
-Recomendamos usar o script oficial que configura permissões e diretórios:
+O instalador faz tudo sozinho:
+1. ✅ Instala Node.js 22 (se não tiver)
+2. ✅ Baixa o Pegasus
+3. ✅ Instala dependências
+4. ✅ Abre o wizard interativo (pede suas chaves)
+5. ✅ Instala como serviço systemd (24/7)
+6. ✅ Inicia o bot
+
+> [!TIP]
+> Requisitos: Ubuntu/Debian com acesso root. Só isso.
+
+### Já instalou e quer reconfigurar?
 ```bash
-chmod +x scripts/install.sh
-./scripts/install.sh
+cd ~/pegasus-agent && npm run setup
+sudo systemctl restart pegasus
 ```
 
-### 3. Configuração (Wizard)
-O Pegasus possui um Onboarding interativo completo:
-```bash
-npm run setup
-```
-*O Wizard irá configurar seus provedores (NVIDIA, OpenRouter, Gemini, etc.), token do Telegram e preferências de personalidade.*
+### Trocar modelo de IA?
+Veja o [Guia de Modelos](./docs/MODELS_GUIDE.md) completo com catálogo e comandos.
 
----
 
 ## 🎮 Modos de Operação
 
