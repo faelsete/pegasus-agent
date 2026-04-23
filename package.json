@@ -11,6 +11,7 @@
     "start": "tsx src/index.ts",
     "start:cli": "tsx src/index.ts cli",
     "setup": "tsx scripts/setup-wizard.ts",
+    "model": "tsx scripts/switch-model.ts",
     "doctor": "tsx src/index.ts doctor",
     "service:install": "sudo bash scripts/service.sh install",
     "service:uninstall": "sudo bash scripts/service.sh uninstall",
