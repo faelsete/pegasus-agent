@@ -10,6 +10,7 @@ import { getDb } from '../db/sqlite.js';
 
 // ═══════════════════════════════════════════
 // 🐴 Telegram Bot (grammY)
+// Persistent session per chat — survives restarts
 // ═══════════════════════════════════════════
 
 const logger = getLogger('telegram');
@@ -35,11 +36,35 @@ function checkRateLimit(chatId: number, maxPerMinute: number): boolean {
   return true;
 }
 
-/** Build conversation history from SQLite */
+/**
+ * Get or create a PERSISTENT conversation ID for a chat.
+ * This ensures the same chatId always maps to the same conversation,
+ * even across bot restarts.
+ */
+function getOrCreateConversationId(chatId: number): string {
+  const db = getDb();
+
+  // Check if we have an active conversation for this chat
+  const existing = db.prepare(
+    'SELECT id FROM conversations WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1'
+  ).get(String(chatId)) as { id: string } | undefined;
+
+  if (existing) {
+    return existing.id;
+  }
+
+  // Create new conversation
+  const id = `tg-${chatId}-${Date.now()}`;
+  db.prepare('INSERT INTO conversations (id, user_id) VALUES (?, ?)')
+    .run(id, String(chatId));
+  return id;
+}
+
+/** Build conversation history from SQLite — gets MORE context */
 function getHistory(conversationId: string): CoreMessage[] {
   const db = getDb();
   const rows = db.prepare(
-    'SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 20'
+    'SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 40'
   ).all(conversationId) as Array<{ role: string; content: string }>;
 
   return rows.reverse().map(r => ({
@@ -70,22 +95,29 @@ export function createBot(config: PegasusConfig): Bot<PegasusContext> {
 
   // ═══ Middleware ═══
 
-  // Session
+  // Session (persistent via SQLite-backed conversationId)
   bot.use(session({
     initial: (): SessionData => ({
-      conversationId: crypto.randomUUID(),
+      conversationId: '', // Will be set in auth middleware
       messageCount: 0,
       lastActivity: Date.now(),
     }),
   }));
 
-  // Auth: whitelist
+  // Auth: whitelist + persistent session init
   bot.use(async (ctx, next) => {
     const chatId = ctx.chat?.id ?? 0;
     if (!config.telegram.allowedChatIds.includes(chatId)) {
       logger.warn({ chatId }, 'unauthorized access attempt');
       return;
     }
+
+    // Initialize persistent conversation if not set
+    if (!ctx.session.conversationId) {
+      ctx.session.conversationId = getOrCreateConversationId(chatId);
+      logger.info({ chatId, conversationId: ctx.session.conversationId }, 'session restored');
+    }
+
     await next();
   });
 
@@ -108,7 +140,7 @@ export function createBot(config: PegasusConfig): Bot<PegasusContext> {
     `/status — Status do sistema\n` +
     `/search <query> — Busca na memória\n` +
     `/remember <fato> — Salva memória\n` +
-    `/forget — Limpa contexto da conversa\n` +
+    `/new — Nova conversa (mantém memórias)\n` +
     `/model — Modelo atual\n` +
     `/doctor — Diagnóstico\n` +
     `/help — Este menu`,
@@ -125,6 +157,7 @@ export function createBot(config: PegasusConfig): Bot<PegasusContext> {
       `💾 Memórias: ${memCount}\n` +
       `⏱️ Uptime: ${h}h ${m}m\n` +
       `🧠 Providers: ${config.providers.filter(p => p.enabled).length}\n` +
+      `💬 Conversa: ${ctx.session.conversationId.slice(0, 12)}...\n` +
       `💬 Msgs nesta sessão: ${ctx.session.messageCount}`,
       { parse_mode: 'Markdown' }
     );
@@ -157,10 +190,15 @@ export function createBot(config: PegasusConfig): Bot<PegasusContext> {
     await ctx.reply(`✅ Memória salva: "${fact.slice(0, 100)}"`);
   });
 
-  bot.command('forget', async (ctx) => {
-    ctx.session.conversationId = crypto.randomUUID();
+  bot.command('new', async (ctx) => {
+    const chatId = ctx.chat?.id ?? 0;
+    const newId = `tg-${chatId}-${Date.now()}`;
+    const db = getDb();
+    db.prepare('INSERT INTO conversations (id, user_id) VALUES (?, ?)')
+      .run(newId, String(chatId));
+    ctx.session.conversationId = newId;
     ctx.session.messageCount = 0;
-    await ctx.reply('🔄 Contexto da conversa resetado. Memórias permanentes preservadas.');
+    await ctx.reply('🔄 Nova conversa iniciada. Memórias permanentes preservadas.');
   });
 
   bot.command('model', (ctx) => {
@@ -179,6 +217,11 @@ export function createBot(config: PegasusConfig): Bot<PegasusContext> {
 
     // Save user message
     saveMessage(ctx.session.conversationId, 'user', ctx.message.text);
+
+    // Keep typing indicator alive during processing
+    const typingInterval = setInterval(() => {
+      ctx.replyWithChatAction('typing').catch(() => {});
+    }, 4000);
 
     try {
       const history = getHistory(ctx.session.conversationId);
@@ -202,6 +245,8 @@ export function createBot(config: PegasusConfig): Bot<PegasusContext> {
     } catch (error) {
       logger.error({ error: error instanceof Error ? error.message : String(error) }, 'reasoning failed');
       await ctx.reply('⚠️ Erro ao processar mensagem. Tente novamente.');
+    } finally {
+      clearInterval(typingInterval);
     }
   });
 
