@@ -4,20 +4,25 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 
 // ═══════════════════════════════════════════
-// 🐴 PEGASUS — Setup Wizard
+// 🐴 PEGASUS — Setup Wizard (Interativo)
+//
+// Busca modelos dinamicamente das APIs.
+// Tudo grátis por padrão.
 // ═══════════════════════════════════════════
 
 const CONFIG_DIR = join(homedir(), '.pegasus');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 
+interface ProviderEntry {
+  type: string;
+  apiKey?: string;
+  baseUrl?: string;
+  defaultModel?: string;
+  enabled: boolean;
+}
+
 interface WizardConfig {
-  providers: Array<{
-    type: string;
-    apiKey?: string;
-    baseUrl?: string;
-    defaultModel?: string;
-    enabled: boolean;
-  }>;
+  providers: ProviderEntry[];
   telegram: {
     token: string;
     allowedChatIds: number[];
@@ -52,12 +57,153 @@ interface WizardConfig {
   thinkingEnabled: boolean;
 }
 
+// ═══ Fetch Models from API ═══
+
+interface ModelInfo {
+  id: string;
+  name?: string;
+}
+
+async function fetchModels(type: string, apiKey: string, baseUrl?: string): Promise<ModelInfo[]> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  let url = '';
+
+  switch (type) {
+    case 'openrouter':
+      url = 'https://openrouter.ai/api/v1/models';
+      headers['Authorization'] = `Bearer ${apiKey}`;
+      break;
+    case 'nvidia':
+      url = `${baseUrl || 'https://integrate.api.nvidia.com/v1'}/models`;
+      headers['Authorization'] = `Bearer ${apiKey}`;
+      break;
+    case 'codex':
+      url = 'https://api.openai.com/v1/models';
+      headers['Authorization'] = `Bearer ${apiKey}`;
+      break;
+    case 'gemini':
+      url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
+      break;
+    default:
+      return [];
+  }
+
+  try {
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+    if (!res.ok) return [];
+    const json = await res.json() as Record<string, unknown>;
+
+    if (type === 'gemini') {
+      const models = (json.models as Array<{ name: string; displayName: string }>) || [];
+      return models
+        .filter(m => m.name.includes('gemini'))
+        .map(m => ({ id: m.name.replace('models/', ''), name: m.displayName }));
+    }
+
+    if (type === 'openrouter') {
+      const models = (json.data as ModelInfo[]) || [];
+      return models
+        .filter(m => m.id && !m.id.includes('image') && !m.id.includes('audio'))
+        .sort((a, b) => a.id.localeCompare(b.id));
+    }
+
+    const models = (json.data as ModelInfo[]) || [];
+    return models.sort((a, b) => a.id.localeCompare(b.id));
+  } catch {
+    return [];
+  }
+}
+
+async function pickModel(
+  rl: readline.Interface,
+  type: string,
+  apiKey: string,
+  baseUrl: string | undefined,
+  defaultModel: string,
+  freeFilter?: string,
+): Promise<string> {
+  console.log('    🔍 Buscando modelos disponíveis...');
+  const allModels = await fetchModels(type, apiKey, baseUrl);
+
+  if (allModels.length === 0) {
+    console.log('    ⚠️  Não consegui buscar modelos (API offline ou chave inválida)');
+    const manual = (await rl.question(`    Modelo [${defaultModel}]: `)) || defaultModel;
+    return manual;
+  }
+
+  // Apply free filter for OpenRouter
+  let models = allModels;
+  if (freeFilter) {
+    const free = allModels.filter(m => m.id.toLowerCase().includes(freeFilter));
+    if (free.length > 0) {
+      console.log(`    💚 ${free.length} modelos grátis encontrados!`);
+      models = free;
+    }
+  }
+
+  // Show paginated list (max 20 at a time)
+  const PAGE = 20;
+  let page = 0;
+  const totalPages = Math.ceil(models.length / PAGE);
+
+  while (true) {
+    const start = page * PAGE;
+    const end = Math.min(start + PAGE, models.length);
+
+    console.log(`\n    📋 Modelos (pág ${page + 1}/${totalPages}, total: ${models.length}):\n`);
+    for (let i = start; i < end; i++) {
+      const m = models[i]!;
+      const isFree = m.id.includes(':free') ? ' 💚 FREE' : '';
+      console.log(`      ${String(i + 1).padStart(4)}. ${m.id}${isFree}`);
+    }
+
+    let prompt = '\n    Digite o número';
+    if (totalPages > 1) prompt += ', [n]ext, [p]rev';
+    prompt += `, [b]uscar, ou Enter para [${defaultModel}]: `;
+
+    const input = (await rl.question(prompt)).trim().toLowerCase();
+
+    if (input === '') return defaultModel;
+    if (input === 'n' && page < totalPages - 1) { page++; continue; }
+    if (input === 'p' && page > 0) { page--; continue; }
+    if (input === 'b') {
+      const search = (await rl.question('    🔎 Buscar: ')).trim().toLowerCase();
+      if (search) {
+        models = allModels.filter(m => m.id.toLowerCase().includes(search));
+        page = 0;
+        console.log(`    → ${models.length} resultados`);
+        if (models.length === 0) models = allModels;
+      }
+      continue;
+    }
+
+    const num = parseInt(input);
+    if (!isNaN(num) && num >= 1 && num <= models.length) {
+      return models[num - 1]!.id;
+    }
+
+    // Typed a model name directly
+    if (input.includes('/')) return input;
+
+    console.log('    ❌ Inválido. Tente de novo.');
+  }
+}
+
+// ═══ Main Wizard ═══
+
 async function main(): Promise<void> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
-  console.log('\n╔═══════════════════════════════════════╗');
-  console.log('║     🐴 PEGASUS — Setup Wizard         ║');
-  console.log('╚═══════════════════════════════════════╝\n');
+  console.log(`
+╔═══════════════════════════════════════════════╗
+║                                               ║
+║     🐴 PEGASUS — Setup Wizard                ║
+║                                               ║
+║     Configuração interativa completa.         ║
+║     Tudo grátis por padrão. Só colar chaves.  ║
+║                                               ║
+╚═══════════════════════════════════════════════╝
+`);
 
   // Ensure directories exist
   mkdirSync(join(CONFIG_DIR, 'data', 'vectors'), { recursive: true });
@@ -85,97 +231,135 @@ async function main(): Promise<void> {
     thinkingEnabled: true,
   };
 
-  // ═══ Step 1: User Profile ═══
-  console.log('═══ ETAPA 1: Perfil do Usuário ═══\n');
+  // ═══════════════════════════════════════
+  // ETAPA 1: Perfil
+  // ═══════════════════════════════════════
+  console.log('═══ ETAPA 1: Perfil do Agente ═══\n');
 
   config.persona.name = (await rl.question('  📝 Nome do agente [Pegasus]: ')) || 'Pegasus';
   config.persona.language = (await rl.question('  🗣️  Idioma [pt-BR]: ')) || 'pt-BR';
   config.persona.timezone = (await rl.question('  🌍 Fuso horário [America/Sao_Paulo]: ')) || 'America/Sao_Paulo';
 
-  // ═══ Step 2: Providers ═══
-  console.log('\n═══ ETAPA 2: Provedores de IA ═══\n');
+  // ═══════════════════════════════════════
+  // ETAPA 2: Provedores de IA
+  // ═══════════════════════════════════════
+  console.log('\n═══ ETAPA 2: Provedores de IA ═══');
+  console.log('  Coloque a chave de cada provedor que quiser usar.');
+  console.log('  Pode ter vários — se um cair, o bot tenta o próximo.\n');
 
-  // NVIDIA
-  const nvidiaKey = await rl.question('  🟢 NVIDIA NIM API Key (grátis em build.nvidia.com) (Enter para pular): ');
-  if (nvidiaKey.trim()) {
-    const model = (await rl.question('    Modelo [meta/llama-3.1-70b-instruct]: ')) || 'meta/llama-3.1-70b-instruct';
-    config.providers.push({ type: 'nvidia', apiKey: nvidiaKey.trim(), baseUrl: 'https://integrate.api.nvidia.com/v1', defaultModel: model, enabled: true });
-    // Auto-set embeddings to NVIDIA free
+  // --- NVIDIA ---
+  console.log('  ┌─ 🟢 NVIDIA NIM (grátis em build.nvidia.com)');
+  const nvidiaKey = (await rl.question('  │  API Key (Enter = pular): ')).trim();
+  if (nvidiaKey) {
+    const model = await pickModel(rl, 'nvidia', nvidiaKey, 'https://integrate.api.nvidia.com/v1', 'meta/llama-3.1-70b-instruct');
+    config.providers.push({ type: 'nvidia', apiKey: nvidiaKey, baseUrl: 'https://integrate.api.nvidia.com/v1', defaultModel: model, enabled: true });
     config.memory.embeddingProvider = 'nvidia';
     config.memory.embeddingModel = 'nvidia/nv-embedqa-e5-v5';
-    console.log('    ✅ NVIDIA configurado (embeddings grátis ativados!)\n');
+    console.log(`  └─ ✅ NVIDIA → ${model} (embeddings grátis ativados!)\n`);
+  } else {
+    console.log('  └─ ⏭️  Pulou\n');
   }
 
-  // OpenRouter
-  console.log('  💡 Modelos grátis no OpenRouter: deepseek/deepseek-chat-v3-0324:free, qwen/qwen3-235b-a22b:free');
-  const orKey = await rl.question('  🟣 OpenRouter API Key (Enter para pular): ');
-  if (orKey.trim()) {
-    const model = (await rl.question('    Modelo [deepseek/deepseek-chat-v3-0324:free] (grátis!): ')) || 'deepseek/deepseek-chat-v3-0324:free';
-    config.providers.push({ type: 'openrouter', apiKey: orKey.trim(), baseUrl: 'https://openrouter.ai/api/v1', defaultModel: model, enabled: true });
-    console.log('    ✅ OpenRouter configurado (modelo grátis!)\n');
+  // --- OpenRouter ---
+  console.log('  ┌─ 🟣 OpenRouter (modelos grátis e pagos — openrouter.ai)');
+  console.log('  │  💡 Tem modelos grátis! Busque por "free" na lista.');
+  const orKey = (await rl.question('  │  API Key (Enter = pular): ')).trim();
+  if (orKey) {
+    const model = await pickModel(rl, 'openrouter', orKey, undefined, 'deepseek/deepseek-chat-v3-0324:free', ':free');
+    config.providers.push({ type: 'openrouter', apiKey: orKey, baseUrl: 'https://openrouter.ai/api/v1', defaultModel: model, enabled: true });
+    console.log(`  └─ ✅ OpenRouter → ${model}\n`);
+  } else {
+    console.log('  └─ ⏭️  Pulou\n');
   }
 
-  // Gemini
-  const geminiKey = await rl.question('  🔵 Google Gemini API Key (Enter para pular): ');
-  if (geminiKey.trim()) {
-    config.providers.push({ type: 'gemini', apiKey: geminiKey.trim(), defaultModel: 'gemini-2.5-pro', enabled: true });
-    console.log('    ✅ Gemini configurado\n');
+  // --- Gemini ---
+  console.log('  ┌─ 🔵 Google Gemini (grátis com limites — aistudio.google.com)');
+  const geminiKey = (await rl.question('  │  API Key (Enter = pular): ')).trim();
+  if (geminiKey) {
+    const model = await pickModel(rl, 'gemini', geminiKey, undefined, 'gemini-2.0-flash');
+    config.providers.push({ type: 'gemini', apiKey: geminiKey, defaultModel: model, enabled: true });
+    console.log(`  └─ ✅ Gemini → ${model}\n`);
+  } else {
+    console.log('  └─ ⏭️  Pulou\n');
   }
 
-  // OpenAI/Codex
-  const openaiKey = await rl.question('  ⚪ OpenAI/Codex API Key (Enter para pular): ');
-  if (openaiKey.trim()) {
-    config.providers.push({ type: 'codex', apiKey: openaiKey.trim(), defaultModel: 'gpt-4o', enabled: true });
-    console.log('    ✅ OpenAI configurado\n');
+  // --- OpenAI ---
+  console.log('  ┌─ ⚪ OpenAI (pago — platform.openai.com)');
+  const openaiKey = (await rl.question('  │  API Key (Enter = pular): ')).trim();
+  if (openaiKey) {
+    const model = await pickModel(rl, 'codex', openaiKey, undefined, 'gpt-4o');
+    config.providers.push({ type: 'codex', apiKey: openaiKey, defaultModel: model, enabled: true });
+    console.log(`  └─ ✅ OpenAI → ${model}\n`);
+  } else {
+    console.log('  └─ ⏭️  Pulou\n');
   }
 
-  // HuggingFace
-  const hfToken = await rl.question('  🟡 HuggingFace Token (para imagens, Enter para pular): ');
-  if (hfToken.trim()) {
-    config.providers.push({ type: 'huggingface', apiKey: hfToken.trim(), defaultModel: 'black-forest-labs/FLUX.1-dev', enabled: true });
-    console.log('    ✅ HuggingFace configurado\n');
+  // --- HuggingFace ---
+  console.log('  ┌─ 🟡 HuggingFace (imagens — huggingface.co)');
+  const hfToken = (await rl.question('  │  Token (Enter = pular): ')).trim();
+  if (hfToken) {
+    config.providers.push({ type: 'huggingface', apiKey: hfToken, defaultModel: 'black-forest-labs/FLUX.1-dev', enabled: true });
+    console.log('  └─ ✅ HuggingFace → FLUX.1-dev\n');
+  } else {
+    console.log('  └─ ⏭️  Pulou\n');
   }
 
-  // Ollama
-  const ollamaUrl = await rl.question('  🟠 Ollama URL [http://localhost:11434] (Enter para pular): ');
-  if (ollamaUrl.trim()) {
-    const model = (await rl.question('    Modelo [llama3.1]: ')) || 'llama3.1';
-    config.providers.push({ type: 'ollama', baseUrl: ollamaUrl.trim() || 'http://localhost:11434', defaultModel: model, enabled: true });
-    console.log('    ✅ Ollama configurado\n');
+  // --- Ollama ---
+  console.log('  ┌─ 🟠 Ollama (local, 100% grátis — ollama.com)');
+  const ollamaUrl = (await rl.question('  │  URL [http://localhost:11434] (Enter = pular): ')).trim();
+  if (ollamaUrl) {
+    const url = ollamaUrl || 'http://localhost:11434';
+    const model = (await rl.question('  │  Modelo [llama3.1]: ')) || 'llama3.1';
+    config.providers.push({ type: 'ollama', baseUrl: url, defaultModel: model, enabled: true });
+    console.log(`  └─ ✅ Ollama → ${model}\n`);
+  } else {
+    console.log('  └─ ⏭️  Pulou\n');
   }
 
+  // Check
   if (config.providers.length === 0) {
-    console.log('  ⚠️  Nenhum provider configurado! Configure pelo menos 1.\n');
+    console.log('  ❌ Nenhum provedor configurado! Precisa de pelo menos 1.');
+    console.log('  Dica: NVIDIA é grátis — pegue a chave em build.nvidia.com\n');
     rl.close();
     return;
   }
 
-  // ═══ Step 3: Embeddings (auto-select free) ═══
-  console.log('═══ ETAPA 3: Embeddings ═══\n');
+  console.log(`  📊 ${config.providers.length} provedor(es) configurado(s)`);
+  console.log(`  📊 Ordem de prioridade (fallback): ${config.providers.map(p => p.type.toUpperCase()).join(' → ')}\n`);
+
+  // ═══════════════════════════════════════
+  // ETAPA 3: Embeddings (auto)
+  // ═══════════════════════════════════════
+  console.log('═══ ETAPA 3: Embeddings (memória) ═══\n');
 
   const hasNvidia = config.providers.some(p => p.type === 'nvidia');
   if (hasNvidia) {
     config.memory.embeddingProvider = 'nvidia';
     config.memory.embeddingModel = 'nvidia/nv-embedqa-e5-v5';
-    console.log('  ✅ Embeddings via NVIDIA (GRÁTIS! nv-embedqa-e5-v5)\n');
+    console.log('  ✅ Embeddings → NVIDIA nv-embedqa-e5-v5 (GRÁTIS!)\n');
   } else if (config.providers.some(p => p.type === 'openrouter')) {
     config.memory.embeddingProvider = 'openrouter';
     config.memory.embeddingModel = 'openai/text-embedding-3-small';
-    console.log('  ✅ Embeddings via OpenRouter (text-embedding-3-small — custo mínimo)\n');
+    console.log('  ✅ Embeddings → OpenRouter text-embedding-3-small (custo mínimo)\n');
   } else {
-    const embProvider = (await rl.question('  Provider de embedding [nvidia/openrouter/ollama]: ')) || 'nvidia';
-    config.memory.embeddingProvider = embProvider as 'nvidia' | 'openrouter' | 'ollama';
-    console.log(`  ✅ Embeddings via ${embProvider}\n`);
+    console.log('  ⚠️  Sem provider de embeddings. Memória semântica desativada.\n');
   }
 
-  // ═══ Step 4: Telegram ═══
-  console.log('═══ ETAPA 4: Telegram Bot ═══\n');
+  // ═══════════════════════════════════════
+  // ETAPA 4: Telegram
+  // ═══════════════════════════════════════
+  console.log('═══ ETAPA 4: Telegram Bot ═══');
+  console.log('  Crie um bot no @BotFather e cole o token aqui.\n');
 
   config.telegram.token = (await rl.question('  🤖 Token do BotFather: ')).trim();
+
+  console.log('\n  💡 Para descobrir seu Chat ID, mande /start pro @userinfobot no Telegram.');
   const chatIds = (await rl.question('  💬 Chat IDs permitidos (separados por vírgula): ')).trim();
   config.telegram.allowedChatIds = chatIds.split(',').filter(Boolean).map(Number);
 
-  // ═══ Step 5: Personality ═══
+  // ═══════════════════════════════════════
+  // ETAPA 5: Personalidade
+  // ═══════════════════════════════════════
   console.log('\n═══ ETAPA 5: Personalidade ═══\n');
   console.log('  [1] 🔧 Técnico e direto');
   console.log('  [2] 😊 Amigável e casual');
@@ -183,19 +367,23 @@ async function main(): Promise<void> {
   const style = (await rl.question('  Escolha [1]: ')) || '1';
   config.persona.style = { '1': 'technical', '2': 'friendly', '3': 'creative' }[style] ?? 'technical';
 
-  // ═══ Step 6: Features ═══
+  // ═══════════════════════════════════════
+  // ETAPA 6: Features
+  // ═══════════════════════════════════════
   console.log('\n═══ ETAPA 6: Funcionalidades ═══\n');
 
-  const autoExtract = (await rl.question('  Memória automática? [Y/n]: ')) || 'Y';
+  const autoExtract = (await rl.question('  🧠 Memória automática? [S/n]: ')) || 'S';
   config.memory.autoExtract = autoExtract.toLowerCase() !== 'n';
 
-  const thinking = (await rl.question('  Thinking forçado? [Y/n]: ')) || 'Y';
+  const thinking = (await rl.question('  💭 Thinking forçado? [S/n]: ')) || 'S';
   config.thinkingEnabled = thinking.toLowerCase() !== 'n';
 
-  const heartbeat = (await rl.question('  Heartbeat? [Y/n]: ')) || 'Y';
+  const heartbeat = (await rl.question('  💓 Heartbeat? [S/n]: ')) || 'S';
   config.heartbeat.enabled = heartbeat.toLowerCase() !== 'n';
 
-  // ═══ Step 7: Save ═══
+  // ═══════════════════════════════════════
+  // ETAPA 7: Salvar
+  // ═══════════════════════════════════════
   console.log('\n═══ ETAPA 7: Salvando ═══\n');
 
   writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
@@ -212,10 +400,27 @@ async function main(): Promise<void> {
     }
   }
 
-  console.log('\n✅ Setup completo!');
-  console.log('  npm start        → Telegram bot');
-  console.log('  npm run start:cli → CLI interativa');
-  console.log('  npm run doctor   → Diagnóstico\n');
+  // ═══ Resumo ═══
+  console.log(`
+╔═══════════════════════════════════════════════╗
+║  ✅ SETUP COMPLETO!                          ║
+╚═══════════════════════════════════════════════╝
+
+  Provedores: ${config.providers.map(p => `${p.type}(${p.defaultModel})`).join(', ')}
+  Embeddings: ${config.memory.embeddingProvider} → ${config.memory.embeddingModel}
+  Telegram:   Bot configurado
+  Memória:    ${config.memory.autoExtract ? 'Automática' : 'Manual'}
+
+  Próximos passos:
+    npm start              → Rodar manual
+    sudo bash scripts/service.sh install  → Rodar 24/7
+
+  Para trocar modelo depois:
+    npm run model
+
+  Para reconfigurar:
+    npm run setup
+`);
 
   rl.close();
 }
