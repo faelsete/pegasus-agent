@@ -101,14 +101,14 @@ O Pegasus vem equipado com 13 ferramentas profissionais prontas para uso:
 
 ---
 
-## 📘 Documentação Detalhada
+## 📘 Documentação
 
-Explore os manuais completos para dominar o Pegasus:
-
-1.  [**Arquitetura do Cérebro**](./docs/ARCHITECTURE.md) - Como o raciocínio funciona.
-2.  [**Sistema de Memória**](./docs/MEMORY_SYSTEM.md) - LanceDB, SQLite e Embeddings.
-3.  **Ferramentas e Sub-Agentes** (Em breve)
-4.  **Guia de Operações e Doctor** (Em breve)
+| Documento | O que cobre |
+|---|---|
+| [**Guia do Usuário**](./docs/USER_GUIDE.md) | 📋 TUDO: modelos, providers, memória, jailbreak, skills, MCP |
+| [**Guia de Modelos**](./docs/MODELS_GUIDE.md) | 🤖 Catálogo completo com comandos |
+| [**Arquitetura**](./docs/ARCHITECTURE.md) | 🧠 Como o cérebro funciona |
+| [**Memória**](./docs/MEMORY_SYSTEM.md) | 💾 LanceDB, SQLite, embeddings |
 
 ---
 
