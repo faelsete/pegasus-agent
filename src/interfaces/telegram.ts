@@ -549,6 +549,22 @@ export function createBot(config: PegasusConfig): Bot<PegasusContext> {
     }
   });
 
+  // ═══ Register commands in Telegram menu (hamburger) ═══
+  bot.api.setMyCommands([
+    { command: 'start', description: '🐴 Iniciar o Pegasus' },
+    { command: 'status', description: '📊 Status do sistema' },
+    { command: 'tokens', description: '🔢 Odômetro de tokens' },
+    { command: 'logs', description: '📋 Últimas atividades' },
+    { command: 'model', description: '🤖 Ver modelo atual' },
+    { command: 'setmodel', description: '🔄 Trocar modelo de IA' },
+    { command: 'think', description: '💭 Ligar/desligar thinking' },
+    { command: 'search', description: '🔍 Buscar na memória' },
+    { command: 'remember', description: '💾 Salvar memória' },
+    { command: 'new', description: '🆕 Nova conversa' },
+    { command: 'restart', description: '♻️ Reiniciar Pegasus' },
+    { command: 'help', description: '❓ Menu de ajuda' },
+  ]).catch(err => logger.warn({ err: String(err) }, 'failed to set bot commands menu'));
+
   return bot;
 }
 
