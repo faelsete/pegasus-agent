@@ -55,7 +55,7 @@ export const PegasusConfigSchema = z.object({
   doctor: DoctorSchema,
   dataDir: z.string().default('~/.pegasus/data'),
   logLevel: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
-  maxContextTokens: z.number().default(12_000),
+  maxContextTokens: z.number().default(6_000),
   thinkingEnabled: z.boolean().default(true),
 });
 

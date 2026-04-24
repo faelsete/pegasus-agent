@@ -75,7 +75,7 @@ async function tryGenerate(
       system: systemPrompt,
       messages,
       tools,
-      maxSteps: 10,
+      maxSteps: 5,
       temperature: 0.7,
       abortSignal: controller.signal,
       onStepFinish: async ({ toolCalls }) => {

@@ -70,8 +70,8 @@ export async function buildContext(userMessage: string, _userId: string): Promis
   sections.push(base);
   totalTokens += cachedSystemTokens;
 
-  // 2. Relevant Memories (budget: max 500 tokens)
-  const MEMORY_BUDGET = 500;
+  // 2. Relevant Memories (budget: max 300 tokens)
+  const MEMORY_BUDGET = 300;
   try {
     const memories = await searchRelevantContext(userMessage);
     const topMemories = memories.slice(0, 5);

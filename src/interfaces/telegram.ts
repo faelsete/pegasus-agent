@@ -75,9 +75,9 @@ function getOrCreateConversationId(chatId: number): string {
  */
 function getHistory(conversationId: string, tokenBudget: number): CoreMessage[] {
   const db = getDb();
-  // Get last 20 messages (we'll trim by budget)
+  // Get last 10 messages (trimmed by budget)
   const rows = db.prepare(
-    'SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 20'
+    'SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 10'
   ).all(conversationId) as Array<{ role: string; content: string }>;
 
   const reversed = rows.reverse();
@@ -89,14 +89,14 @@ function getHistory(conversationId: string, tokenBudget: number): CoreMessage[] 
     const row = reversed[i]!;
     let content = row.content;
 
-    // Recent messages (last 4): full content (up to 1500 chars)
+    // Recent messages (last 3): trimmed content (up to 800 chars)
     const recency = reversed.length - 1 - i;
-    if (recency < 4) {
-      content = content.length > 1500 ? content.slice(0, 1500) + '...' : content;
+    if (recency < 3) {
+      content = content.length > 800 ? content.slice(0, 800) + '...' : content;
     }
-    // Older messages: aggressive compression (300 chars)
+    // Older messages: aggressive compression (150 chars)
     else {
-      content = content.length > 300 ? content.slice(0, 300) + '...' : content;
+      content = content.length > 150 ? content.slice(0, 150) + '...' : content;
     }
 
     const msgTokens = estimateTokens(content);
