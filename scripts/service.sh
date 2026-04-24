@@ -73,6 +73,37 @@ install_service() {
     # Build full PATH including node manager dirs
     FULL_PATH="${NODE_DIR}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${INSTALL_HOME}/.local/bin"
 
+    # ─── Ollama check (local embeddings) ───
+    EMBEDDING_MODEL="bge-m3"
+    echo -e "${YELLOW}► Verificando Ollama (embeddings locais)...${NC}"
+
+    if ! command -v ollama &> /dev/null; then
+        echo -e "${YELLOW}  Ollama não encontrado. Instalando...${NC}"
+        curl -fsSL https://ollama.com/install.sh | sh
+        echo -e "${GREEN}✓ Ollama instalado${NC}"
+    else
+        OLLAMA_VER=$(ollama --version 2>/dev/null || echo "unknown")
+        echo -e "${GREEN}  Ollama: ${OLLAMA_VER}${NC}"
+    fi
+
+    # Ensure Ollama service is running
+    if systemctl is-active --quiet ollama 2>/dev/null; then
+        echo -e "${GREEN}  Serviço Ollama: ativo${NC}"
+    else
+        echo -e "${YELLOW}  Iniciando serviço Ollama...${NC}"
+        systemctl start ollama 2>/dev/null || ollama serve &>/dev/null &
+        sleep 2
+    fi
+
+    # Pull embedding model if not present
+    if ollama list 2>/dev/null | grep -q "${EMBEDDING_MODEL}"; then
+        echo -e "${GREEN}✓ Modelo de embedding '${EMBEDDING_MODEL}' (multilíngue/PT) já instalado${NC}"
+    else
+        echo -e "${YELLOW}  Baixando modelo de embedding '${EMBEDDING_MODEL}' (multilíngue/PT)...${NC}"
+        ollama pull "${EMBEDDING_MODEL}"
+        echo -e "${GREEN}✓ Modelo '${EMBEDDING_MODEL}' instalado${NC}"
+    fi
+
     # Generate service file
     cat > "$SERVICE_FILE" << EOF
 [Unit]

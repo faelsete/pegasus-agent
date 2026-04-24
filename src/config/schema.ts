@@ -20,7 +20,7 @@ export const TelegramSchema = z.object({
 });
 
 export const MemorySchema = z.object({
-  embeddingModel: z.string().default('nomic-embed-text'),
+  embeddingModel: z.string().default('bge-m3'),
   embeddingProvider: z.enum(['openrouter', 'ollama', 'nvidia']).default('ollama'),
   maxSearchResults: z.number().default(10),
   autoExtract: z.boolean().default(true),
