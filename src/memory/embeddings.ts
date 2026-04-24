@@ -28,38 +28,46 @@ function getEmbeddingModel(): any {
   const memConfig = config.memory;
 
   const provider = config.providers.find(p => p.type === memConfig.embeddingProvider && p.enabled);
-  if (!provider?.apiKey) {
+
+  // Ollama runs locally — no API key needed
+  if (memConfig.embeddingProvider === 'ollama') {
+    const baseURL = provider?.baseUrl ?? 'http://localhost:11434/v1';
+    const compatible = createOpenAICompatible({
+      name: 'ollama-embeddings',
+      baseURL,
+      headers: {},
+    });
+    return compatible.textEmbeddingModel(memConfig.embeddingModel);
+  }
+
+  const apiKey = provider?.apiKey ?? provider?.apiKeys?.[0];
+  if (!apiKey) {
     throw new Error(`No API key for embedding provider: ${memConfig.embeddingProvider}`);
   }
 
   // Use createOpenAI only for native OpenAI/Codex
-  if (provider.type === 'codex') {
-    const openai = createOpenAI({
-      apiKey: provider.apiKey,
-    });
+  if (provider!.type === 'codex') {
+    const openai = createOpenAI({ apiKey });
     return openai.embedding(memConfig.embeddingModel);
   }
 
   // Use createOpenAICompatible for third-party endpoints (OpenRouter, NVIDIA)
-  // Determine the correct base URL per provider type
   let baseURL: string;
-  switch (provider.type) {
+  switch (provider!.type) {
     case 'nvidia':
-      baseURL = provider.baseUrl ?? 'https://integrate.api.nvidia.com/v1';
+      baseURL = provider!.baseUrl ?? 'https://integrate.api.nvidia.com/v1';
       break;
     case 'openrouter':
       baseURL = 'https://openrouter.ai/api/v1';
       break;
     default:
-      baseURL = provider.baseUrl ?? 'https://openrouter.ai/api/v1';
+      baseURL = provider!.baseUrl ?? 'https://openrouter.ai/api/v1';
   }
 
   const compatible = createOpenAICompatible({
-    name: `${provider.type}-embeddings`,
+    name: `${provider!.type}-embeddings`,
     baseURL,
-    headers: {
-      Authorization: `Bearer ${provider.apiKey}`,
-    },
+    headers: { Authorization: `Bearer ${apiKey}` },
   });
   return compatible.textEmbeddingModel(memConfig.embeddingModel);
 }

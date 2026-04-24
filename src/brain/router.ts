@@ -33,49 +33,55 @@ function getModel(providerConfig: ProviderConfig, fallbackModel: string): any {
 }
 
 /**
- * Expand a single provider config into multiple if it has apiKeys array.
- * Each key becomes its own entry in the fallback chain.
+ * Pick one API key from a provider using round-robin rotation.
+ * Avoids creating duplicate fallback entries for the same model.
  */
-function expandProviderKeys(provider: ProviderConfig): ProviderConfig[] {
+const keyIndex = new Map<string, number>();
+
+function pickKeyForProvider(provider: ProviderConfig): ProviderConfig {
   const keys = provider.apiKeys;
-  if (keys && keys.length > 0) {
-    return keys.map((key, i) => {
-      logger.debug({ type: provider.type, keyIndex: i + 1, total: keys.length }, 'expanding multi-key provider');
-      return { ...provider, apiKey: key, apiKeys: undefined };
-    });
-  }
-  return [provider];
+  if (!keys || keys.length === 0) return provider;
+
+  const provKey = `${provider.type}-${provider.defaultModel ?? 'default'}`;
+  const idx = keyIndex.get(provKey) ?? 0;
+  keyIndex.set(provKey, (idx + 1) % keys.length);
+
+  logger.debug({ type: provider.type, keyIndex: idx + 1, total: keys.length }, 'rotating key');
+  return { ...provider, apiKey: keys[idx], apiKeys: undefined };
 }
 
 /**
  * Get ALL available text models ordered by priority.
- * Supports multiple providers of the same type AND multiple keys per provider.
- * Used by cortex for fallback: if first fails, try next.
+ * One entry per unique provider+model combo (no duplicates).
+ * Multiple keys for the same provider use round-robin rotation.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function getAllTextModels(): Array<{ model: any; providerType: string; modelId: string }> {
   const config = getConfig();
   const results: Array<{ model: unknown; providerType: string; modelId: string }> = [];
+  const seen = new Set<string>();
 
   for (const type of TEXT_PROVIDER_PRIORITY) {
-    // Find ALL providers of this type (not just the first one)
     const providers = config.providers.filter(p => p.type === type && p.enabled);
     for (const provider of providers) {
-      // Expand multi-key providers into separate entries
-      const expanded = expandProviderKeys(provider);
-      for (const singleProvider of expanded) {
-        try {
-          const fallback = type === 'nvidia' ? 'qwen/qwen3.5-122b-a10b'
-            : type === 'ollama' ? 'llama3.1'
-            : type === 'codex' ? 'gpt-4o'
-            : type === 'gemini' ? 'gemini-2.0-flash'
-            : 'google/gemma-3-27b-it:free';
-          const model = getModel(singleProvider, fallback);
-          const modelId = singleProvider.defaultModel ?? fallback;
-          results.push({ model, providerType: type, modelId });
-        } catch (err) {
-          logger.warn({ provider: type, error: err instanceof Error ? err.message : String(err) }, 'provider init failed, skipping');
-        }
+      const resolved = pickKeyForProvider(provider);
+      const fallback = type === 'nvidia' ? 'qwen/qwen3.5-122b-a10b'
+        : type === 'ollama' ? 'llama3.1'
+        : type === 'codex' ? 'gpt-4o'
+        : type === 'gemini' ? 'gemini-2.0-flash'
+        : 'google/gemma-3-27b-it:free';
+      const modelId = resolved.defaultModel ?? fallback;
+
+      // Deduplicate: same provider+model only appears once
+      const dedupeKey = `${type}:${modelId}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+
+      try {
+        const model = getModel(resolved, fallback);
+        results.push({ model, providerType: type, modelId });
+      } catch (err) {
+        logger.warn({ provider: type, error: err instanceof Error ? err.message : String(err) }, 'provider init failed, skipping');
       }
     }
   }

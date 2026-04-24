@@ -199,8 +199,12 @@ export const MemorySaveTool = buildTool({
     importance: z.number().min(0).max(1).optional().default(0.7),
   }),
   execute: async ({ text, type, importance }) => {
-    await addMemory(text, type, { source: 'manual', importance });
-    return `Memory saved: "${text.slice(0, 100)}" (type: ${type}, importance: ${importance})`;
+    try {
+      await addMemory(text, type, { source: 'manual', importance });
+      return `Memory saved: "${text.slice(0, 100)}" (type: ${type}, importance: ${importance})`;
+    } catch (err) {
+      return `Failed to save memory: ${err instanceof Error ? err.message : String(err)}. The information was noted but not persisted.`;
+    }
   },
 });
 
