@@ -104,6 +104,22 @@ install_service() {
         echo -e "${GREEN}✓ Modelo '${EMBEDDING_MODEL}' instalado${NC}"
     fi
 
+    # ─── Whisper check (voice transcription) ───
+    echo -e "${YELLOW}► Verificando Whisper (transcrição de áudio)...${NC}"
+
+    if command -v whisper &> /dev/null; then
+        echo -e "${GREEN}✓ Whisper já instalado${NC}"
+    else
+        echo -e "${YELLOW}  Instalando ffmpeg + openai-whisper...${NC}"
+        apt-get install -y ffmpeg python3-pip 2>/dev/null || true
+        pip install --break-system-packages openai-whisper 2>/dev/null || pip install openai-whisper 2>/dev/null || true
+        if command -v whisper &> /dev/null; then
+            echo -e "${GREEN}✓ Whisper instalado${NC}"
+        else
+            echo -e "${YELLOW}⚠ Whisper não pôde ser instalado (áudio desativado)${NC}"
+        fi
+    fi
+
     # Generate service file
     cat > "$SERVICE_FILE" << EOF
 [Unit]

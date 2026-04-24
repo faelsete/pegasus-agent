@@ -531,6 +531,118 @@ export function createBot(config: PegasusConfig): Bot<PegasusContext> {
     }
   });
 
+  // ═══ Voice/Audio Message Handler ═══
+
+  bot.on(['message:voice', 'message:audio'], async (ctx) => {
+    const chatId = ctx.chat?.id ?? 0;
+
+    // Same lock/cooldown as text messages
+    if (processingLock.get(chatId)) {
+      await ctx.reply('⏳ Ainda processando a mensagem anterior, aguarde...');
+      return;
+    }
+
+    processingLock.set(chatId, true);
+    lastMessageTime.set(chatId, Date.now());
+
+    await ctx.replyWithChatAction('typing');
+    ctx.session.messageCount++;
+    ctx.session.lastActivity = Date.now();
+
+    const typingInterval = setInterval(() => {
+      ctx.replyWithChatAction('typing').catch(() => {});
+    }, 4000);
+
+    try {
+      // Get file from Telegram
+      const fileId = ctx.message.voice?.file_id ?? ctx.message.audio?.file_id;
+      if (!fileId) {
+        await ctx.reply('⚠️ Não consegui acessar o áudio.');
+        return;
+      }
+
+      const file = await ctx.api.getFile(fileId);
+      const fileUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
+
+      // Download to temp file
+      const { execSync } = await import('node:child_process');
+      const { mkdtempSync } = await import('node:fs');
+      const { join } = await import('node:path');
+      const tmpDir = mkdtempSync('/tmp/pegasus-audio-');
+      const audioFile = join(tmpDir, 'audio.ogg');
+      const wavFile = join(tmpDir, 'audio.wav');
+
+      execSync(`curl -fsSL "${fileUrl}" -o "${audioFile}"`, { timeout: 30_000 });
+
+      // Convert to WAV with ffmpeg
+      execSync(`ffmpeg -y -i "${audioFile}" -ar 16000 -ac 1 "${wavFile}" 2>/dev/null`, { timeout: 30_000 });
+
+      // Transcribe with whisper
+      let transcription = '';
+      try {
+        transcription = execSync(
+          `whisper "${wavFile}" --model base --language pt --output_format txt --output_dir "${tmpDir}" 2>/dev/null && cat "${tmpDir}/audio.txt"`,
+          { timeout: 120_000, encoding: 'utf-8' }
+        ).trim();
+      } catch {
+        // Cleanup and notify
+        execSync(`rm -rf "${tmpDir}"`);
+        await ctx.reply(
+          '🎤 Recebi seu áudio mas o Whisper não está instalado.\n\n' +
+          'Para ativar transcrição, rode no servidor:\n' +
+          '`pip install openai-whisper`',
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+
+      // Cleanup temp files
+      execSync(`rm -rf "${tmpDir}"`);
+
+      if (!transcription) {
+        await ctx.reply('🎤 Não consegui transcrever o áudio. Tente enviar como texto.');
+        return;
+      }
+
+      // Show transcription
+      await ctx.reply(`🎤 _"${transcription.slice(0, 200)}"_`, { parse_mode: 'Markdown' }).catch(() => {});
+
+      // Save and process as normal text
+      saveMessage(ctx.session.conversationId, 'user', `[áudio] ${transcription}`);
+
+      const historyBudget = getHistoryBudget(800);
+      const history = getHistory(ctx.session.conversationId, historyBudget);
+      const result = await reason({
+        userMessage: transcription,
+        conversationHistory: history,
+        userId: String(ctx.from.id),
+        conversationId: ctx.session.conversationId,
+      });
+
+      const responseText = result.response?.trim();
+      if (!responseText) {
+        await ctx.reply('🤔 Não consegui gerar uma resposta. Tente reformular.');
+        return;
+      }
+
+      saveMessage(ctx.session.conversationId, 'assistant', responseText, result.thinking, result.toolsUsed);
+
+      const chunks = splitMessage(responseText, 4000);
+      for (const chunk of chunks) {
+        await ctx.reply(chunk, { parse_mode: 'Markdown' }).catch(() =>
+          ctx.reply(chunk)
+        );
+      }
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.error({ error: errMsg }, 'voice processing failed');
+      await ctx.reply(`⚠️ Erro ao processar áudio: \`${errMsg.slice(0, 100)}\``, { parse_mode: 'Markdown' });
+    } finally {
+      clearInterval(typingInterval);
+      processingLock.set(chatId, false);
+    }
+  });
+
   // ═══ Error Handler ═══
 
   bot.catch((err) => {
