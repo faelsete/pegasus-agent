@@ -57,6 +57,66 @@ export class Brainstem {
     const db = getDb();
     db.prepare("INSERT OR REPLACE INTO config_kv (key, value, updated_at) VALUES ('last_heartbeat', ?, datetime('now'))")
       .run(String(Date.now()));
+
+    // Retry pending tasks
+    await this.retryPendingTasks();
+  }
+
+  private async retryPendingTasks(): Promise<void> {
+    const db = getDb();
+    const tasks = db.prepare(
+      `SELECT * FROM pending_tasks WHERE status = 'pending' AND attempts < max_attempts ORDER BY created_at ASC LIMIT 3`
+    ).all() as Array<{ id: string; chat_id: string; conversation_id: string; user_message: string; attempts: number; max_attempts: number }>;
+
+    if (tasks.length === 0) return;
+
+    logger.info({ count: tasks.length }, 'retrying pending tasks');
+
+    for (const task of tasks) {
+      try {
+        const { reason } = await import('./cortex.js');
+        const result = await reason({
+          userMessage: task.user_message,
+          conversationHistory: [],
+          userId: task.chat_id,
+          conversationId: task.conversation_id,
+        });
+
+        // Mark as completed
+        db.prepare(`UPDATE pending_tasks SET status = 'completed', last_attempt = ? WHERE id = ?`)
+          .run(Date.now(), task.id);
+
+        // Notify user with the response
+        if (this.notifyFn && result.response) {
+          await this.notifyFn(
+            `🔄 *Tarefa pendente concluída!*\n\n` +
+            `📝 Pergunta: "${task.user_message.slice(0, 100)}"\n\n` +
+            `💬 Resposta:\n${result.response.slice(0, 3500)}`
+          );
+        }
+
+        logger.info({ taskId: task.id }, 'pending task completed');
+      } catch (err) {
+        const newAttempts = task.attempts + 1;
+        if (newAttempts >= task.max_attempts) {
+          db.prepare(`UPDATE pending_tasks SET status = 'failed', attempts = ?, last_attempt = ? WHERE id = ?`)
+            .run(newAttempts, Date.now(), task.id);
+
+          if (this.notifyFn) {
+            await this.notifyFn(
+              `❌ *Tarefa abandonada após ${newAttempts} tentativas*\n\n` +
+              `📝 "${task.user_message.slice(0, 100)}"\n\n` +
+              `Erro: ${err instanceof Error ? err.message.slice(0, 100) : 'desconhecido'}`
+            );
+          }
+        } else {
+          db.prepare(`UPDATE pending_tasks SET attempts = ?, last_attempt = ? WHERE id = ?`)
+            .run(newAttempts, Date.now(), task.id);
+        }
+
+        logger.warn({ taskId: task.id, attempt: newAttempts }, 'pending task retry failed');
+      }
+    }
   }
 
   private async dream(): Promise<void> {

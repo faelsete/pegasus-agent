@@ -5,6 +5,8 @@ import { extractThinking } from './thinker.js';
 import { extractAndStore } from '../memory/extractor.js';
 import { getAiSdkTools } from '../tools/registry.js';
 import { getLogger } from '../utils/logger.js';
+import { estimateTokens } from '../utils/tokens.js';
+import { getDb } from '../db/sqlite.js';
 
 // ═══════════════════════════════════════════
 // Cortex — Main Reasoning Loop
@@ -43,6 +45,10 @@ export interface ReasonOutput {
   thinking: string;
   toolsUsed: string[];
   memoriesFound: number;
+  usedProvider: string;
+  usedModel: string;
+  inputTokens: number;
+  outputTokens: number;
 }
 
 /**
@@ -168,15 +174,34 @@ export async function reason(input: ReasonInput): Promise<ReasonOutput> {
     }, 10000); // Wait 10s to avoid API burst
   }
 
-  // ═══ STEP 5: RESPOND ═══
+  // ═══ STEP 5: RESPOND + TOKEN TRACKING ═══
   const elapsed = Date.now() - startTime;
+
+  // Estimate tokens (SDK may or may not provide usage)
+  const sdkUsage = result.usage;
+  const inputTokens = sdkUsage?.promptTokens ?? estimateTokens(systemPrompt + messages.map(m => String(m.content)).join(''));
+  const outputTokens = sdkUsage?.completionTokens ?? estimateTokens(response);
+
+  // Save to odometer
+  const usedModelId = models.find(m => m.providerType === usedProvider)?.modelId ?? 'unknown';
+  try {
+    const db = getDb();
+    db.prepare(
+      'INSERT INTO token_usage (provider, model, input_tokens, output_tokens, conversation_id) VALUES (?, ?, ?, ?, ?)'
+    ).run(usedProvider, usedModelId, inputTokens, outputTokens, input.conversationId ?? null);
+  } catch {
+    logger.warn('failed to save token usage');
+  }
 
   logger.info({
     elapsed: `${elapsed}ms`,
     provider: usedProvider,
+    model: usedModelId,
     tools: allToolCalls.length,
     toolNames: allToolCalls.length > 0 ? allToolCalls.join(', ') : 'none',
     memories: memoriesFound,
+    inputTokens,
+    outputTokens,
     responseLen: response.length,
   }, 'reasoning complete');
 
@@ -185,5 +210,9 @@ export async function reason(input: ReasonInput): Promise<ReasonOutput> {
     thinking,
     toolsUsed: allToolCalls,
     memoriesFound,
+    usedProvider,
+    usedModel: usedModelId,
+    inputTokens,
+    outputTokens,
   };
 }

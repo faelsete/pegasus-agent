@@ -137,6 +137,32 @@ function runMigrations(database: Database.Database): void {
       details TEXT,
       created_at INTEGER NOT NULL DEFAULT (unixepoch('now') * 1000)
     );
+
+    -- Pending Tasks (retry after failure)
+    CREATE TABLE IF NOT EXISTS pending_tasks (
+      id TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
+      user_message TEXT NOT NULL,
+      error_reason TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 5,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'completed', 'failed')),
+      created_at INTEGER NOT NULL DEFAULT (unixepoch('now') * 1000),
+      last_attempt INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_tasks(status);
+
+    -- Token Usage Odometer
+    CREATE TABLE IF NOT EXISTS token_usage (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider TEXT NOT NULL,
+      model TEXT,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      conversation_id TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch('now') * 1000)
+    );
   `);
 
   logger.debug('Migrations complete');

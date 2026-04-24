@@ -180,6 +180,7 @@ export function createBot(config: PegasusConfig): Bot<PegasusContext> {
   bot.command('help', (ctx) => ctx.reply(
     `🐴 *Pegasus — Comandos*\n\n` +
     `/status — Status do sistema\n` +
+    `/tokens — Odômetro de tokens usados\n` +
     `/search <query> — Busca na memória\n` +
     `/remember <fato> — Salva memória\n` +
     `/new — Nova conversa (mantém memórias)\n` +
@@ -187,7 +188,6 @@ export function createBot(config: PegasusConfig): Bot<PegasusContext> {
     `/setmodel <modelo> — Troca o modelo\n` +
     `/think on|off — Liga/desliga thinking\n` +
     `/restart — Reinicia o Pegasus\n` +
-    `/doctor — Diagnóstico\n` +
     `/help — Este menu`,
     { parse_mode: 'Markdown' }
   ));
@@ -208,6 +208,38 @@ export function createBot(config: PegasusConfig): Bot<PegasusContext> {
       `💭 Thinking: ${currentConfig.thinkingEnabled ? 'ON' : 'OFF'}\n` +
       `💬 Conversa: ${ctx.session.conversationId.slice(0, 12)}...\n` +
       `💬 Msgs nesta sessão: ${ctx.session.messageCount}`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  // ═══ /tokens — Token Odometer ═══
+  bot.command('tokens', async (ctx) => {
+    const db = getDb();
+    const totals = db.prepare(
+      'SELECT COALESCE(SUM(input_tokens), 0) as input, COALESCE(SUM(output_tokens), 0) as output FROM token_usage'
+    ).get() as { input: number; output: number };
+    const today = db.prepare(
+      `SELECT COALESCE(SUM(input_tokens), 0) as input, COALESCE(SUM(output_tokens), 0) as output FROM token_usage WHERE created_at > ?`
+    ).get(Date.now() - 86_400_000) as { input: number; output: number };
+    const pending = db.prepare(
+      `SELECT COUNT(*) as count FROM pending_tasks WHERE status = 'pending'`
+    ).get() as { count: number };
+
+    const total = totals.input + totals.output;
+    const todayTotal = today.input + today.output;
+    const fmtK = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+
+    await ctx.reply(
+      `📊 *Odômetro de Tokens*\n\n` +
+      `*Total (lifetime):*\n` +
+      `  📥 Input:  ${fmtK(totals.input)}\n` +
+      `  📤 Output: ${fmtK(totals.output)}\n` +
+      `  🔢 Total:  ${fmtK(total)}\n\n` +
+      `*Hoje (24h):*\n` +
+      `  📥 Input:  ${fmtK(today.input)}\n` +
+      `  📤 Output: ${fmtK(today.output)}\n` +
+      `  🔢 Total:  ${fmtK(todayTotal)}\n\n` +
+      `⏳ Tarefas pendentes: ${pending.count}`,
       { parse_mode: 'Markdown' }
     );
   });
@@ -408,10 +440,42 @@ export function createBot(config: PegasusConfig): Bot<PegasusContext> {
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
       logger.error({ error: errMsg }, 'reasoning failed');
+
+      // Save as pending task for retry later
+      try {
+        const db = getDb();
+        const taskId = crypto.randomUUID();
+        db.prepare(
+          'INSERT INTO pending_tasks (id, chat_id, conversation_id, user_message, error_reason, attempts, last_attempt) VALUES (?, ?, ?, ?, ?, 1, ?)'
+        ).run(taskId, String(chatId), ctx.session.conversationId, ctx.message.text, errMsg, Date.now());
+        logger.info({ taskId, chatId }, 'pending task saved for retry');
+      } catch {
+        logger.warn('failed to save pending task');
+      }
+
+      // Detailed error notification
       if (errMsg.includes('All providers failed')) {
-        await ctx.reply('⚠️ Todos os provedores de IA falharam. Tentando de novo em breve...');
+        await ctx.reply(
+          `⚠️ *Todos os provedores falharam*\n\n` +
+          `Sua mensagem foi salva como tarefa pendente.\n` +
+          `O sistema tentará novamente automaticamente quando os provedores voltarem.\n\n` +
+          `🔄 Tarefas pendentes: use /tokens para ver`,
+          { parse_mode: 'Markdown' }
+        );
+      } else if (errMsg.includes('abort') || errMsg.includes('timeout')) {
+        await ctx.reply(
+          `⏱️ *Timeout — resposta demorou demais*\n\n` +
+          `Salvo como tarefa pendente para retry automático.\n` +
+          `Erro: \`${errMsg.slice(0, 100)}\``,
+          { parse_mode: 'Markdown' }
+        );
       } else {
-        await ctx.reply('⚠️ Erro ao processar mensagem. Tente novamente.');
+        await ctx.reply(
+          `⚠️ *Erro ao processar*\n\n` +
+          `Salvo como tarefa pendente.\n` +
+          `Erro: \`${errMsg.slice(0, 150)}\``,
+          { parse_mode: 'Markdown' }
+        );
       }
     } finally {
       clearInterval(typingInterval);
