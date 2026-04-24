@@ -181,6 +181,7 @@ export function createBot(config: PegasusConfig): Bot<PegasusContext> {
     `🐴 *Pegasus — Comandos*\n\n` +
     `/status — Status do sistema\n` +
     `/tokens — Odômetro de tokens usados\n` +
+    `/logs — Últimas atividades\n` +
     `/search <query> — Busca na memória\n` +
     `/remember <fato> — Salva memória\n` +
     `/new — Nova conversa (mantém memórias)\n` +
@@ -240,6 +241,53 @@ export function createBot(config: PegasusConfig): Bot<PegasusContext> {
       `  📤 Output: ${fmtK(today.output)}\n` +
       `  🔢 Total:  ${fmtK(todayTotal)}\n\n` +
       `⏳ Tarefas pendentes: ${pending.count}`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  // ═══ /logs — Recent Activity ═══
+  bot.command('logs', async (ctx) => {
+    const db = getDb();
+
+    // Last 15 interactions from token_usage (most recent activity)
+    const recent = db.prepare(
+      `SELECT provider, model, input_tokens, output_tokens, created_at FROM token_usage ORDER BY created_at DESC LIMIT 15`
+    ).all() as Array<{ provider: string; model: string; input_tokens: number; output_tokens: number; created_at: number }>;
+
+    if (recent.length === 0) {
+      await ctx.reply('📋 Nenhuma atividade registrada ainda.');
+      return;
+    }
+
+    const fmtTime = (ts: number) => {
+      const d = new Date(ts);
+      return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+    };
+
+    const lines = recent.map((r) => {
+      const total = r.input_tokens + r.output_tokens;
+      const modelShort = r.model?.split('/').pop() ?? r.provider;
+      return `${fmtTime(r.created_at)} │ ${modelShort} │ ${total} tok`;
+    });
+
+    // Pending tasks
+    const pending = db.prepare(
+      `SELECT user_message, attempts, error_reason, created_at FROM pending_tasks WHERE status = 'pending' ORDER BY created_at DESC LIMIT 5`
+    ).all() as Array<{ user_message: string; attempts: number; error_reason: string; created_at: number }>;
+
+    let pendingBlock = '';
+    if (pending.length > 0) {
+      pendingBlock = '\n\n⏳ *Tarefas Pendentes:*\n' +
+        pending.map(p => `  • "${p.user_message.slice(0, 50)}..." (${p.attempts}x, ${p.error_reason?.slice(0, 40)})`).join('\n');
+    }
+
+    await ctx.reply(
+      `📋 *Últimas Atividades*\n\n` +
+      `\`\`\`\n` +
+      `Hora  │ Modelo         │ Tokens\n` +
+      `──────┼────────────────┼───────\n` +
+      lines.join('\n') +
+      `\n\`\`\`${pendingBlock}`,
       { parse_mode: 'Markdown' }
     );
   });
